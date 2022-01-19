@@ -2,10 +2,14 @@ use super::{FileId, FileMeta, FileSource, FileType};
 use anyhow::Context;
 use futures::TryStreamExt;
 use std::path;
-use tokio::fs;
+use tokio::{
+    fs,
+    io::{AsyncRead, AsyncWrite},
+};
 use tokio_stream::wrappers as tsw;
+use tokio_util::io as uio;
 
-async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
+pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     let id = path.to_string_lossy().to_string();
 
     let name = match path.file_name() {
@@ -54,4 +58,32 @@ pub async fn list_meta(path: &path::Path) -> anyhow::Result<Vec<FileMeta>> {
         .await?;
 
     Ok(files)
+}
+
+pub async fn read(path: &path::Path) -> anyhow::Result<uio::ReaderStream<impl AsyncRead>> {
+    let file = fs::File::open(path).await.with_context(|| {
+        format!(
+            "Could not read file '{}'",
+            path.to_string_lossy().to_string()
+        )
+    })?;
+
+    let s = uio::ReaderStream::new(file);
+
+    Ok(s)
+}
+
+pub async fn write(path: &path::Path) -> anyhow::Result<impl AsyncWrite> {
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .await
+        .with_context(|| {
+            format!(
+                "Could not write to file '{}'",
+                path.to_string_lossy().to_string()
+            )
+        })?;
+    Ok(file)
 }

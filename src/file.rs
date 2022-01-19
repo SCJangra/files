@@ -1,6 +1,7 @@
-use std::path;
-
 use serde::{Deserialize, Serialize};
+use std::path;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::io as uio;
 
 mod local;
 
@@ -27,10 +28,31 @@ pub enum FileSource {
     Local,
 }
 
+async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
+    let FileId(source, id) = id;
+    match source {
+        FileSource::Local => local::get_meta(path::Path::new(id)).await,
+    }
+}
+
 pub async fn list_meta(id: &FileId) -> anyhow::Result<Vec<FileMeta>> {
     let FileId(source, id) = id;
 
     match source {
         FileSource::Local => local::list_meta(path::Path::new(id)).await,
+    }
+}
+
+async fn read(id: &FileId) -> anyhow::Result<uio::ReaderStream<impl AsyncRead>> {
+    let FileId(source, id) = id;
+    match source {
+        FileSource::Local => local::read(path::Path::new(id)).await,
+    }
+}
+
+async fn write(id: &FileId) -> anyhow::Result<impl AsyncWrite> {
+    let FileId(source, id) = id;
+    match source {
+        FileSource::Local => local::write(path::Path::new(id)).await,
     }
 }

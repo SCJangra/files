@@ -58,6 +58,7 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-stream",
+ "tokio-util",
 ]
 
 [[package]]
