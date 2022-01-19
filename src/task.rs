@@ -1,5 +1,6 @@
 use crate::{file, utils};
 use futures::TryFutureExt;
+use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
 use std::collections as cl;
 use tokio::{sync, task};
@@ -34,4 +35,18 @@ pub async fn list(id: file::FileId, task_id: ps::SubscriptionId, sink: pst::Sink
             }
         }),
     );
+}
+
+pub async fn cancel_task(id: ps::SubscriptionId) -> jrpc::Result<bool> {
+    let removed = ACTIVE.write().await.remove(&id);
+    if let Some(h) = removed {
+        h.abort();
+        Ok(true)
+    } else {
+        Err(jrpc::Error {
+            code: jrpc::ErrorCode::InvalidParams,
+            message: "Invalid subscription.".into(),
+            data: None,
+        })
+    }
 }
