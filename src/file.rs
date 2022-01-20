@@ -1,31 +1,9 @@
-use serde::{Deserialize, Serialize};
 use std::path;
 use tokio::io::{AsyncRead, AsyncWrite};
+pub use types::*;
 
 mod local;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FileMeta {
-    name: String,
-    file_type: FileType,
-    size: u64,
-    id: FileId,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum FileType {
-    File,
-    Dir,
-    Unknown,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FileId(FileSource, String);
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum FileSource {
-    Local,
-}
+mod types;
 
 async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
     let FileId(source, id) = id;
