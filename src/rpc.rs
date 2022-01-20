@@ -1,14 +1,7 @@
 use files::{file, task as rpc_task};
-use futures::TryFutureExt;
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
-use ps::manager::IdProvider;
 use tokio::task;
-
-lazy_static::lazy_static! {
-    static ref RAND_STR_ID: ps::manager::RandomStringIdProvider =
-        ps::manager::RandomStringIdProvider::new();
-}
 
 #[jsonrpc_derive::rpc(server)]
 pub trait Rpc {
@@ -43,19 +36,6 @@ pub trait Rpc {
 
 pub struct RpcImpl;
 
-impl RpcImpl {
-    async fn get_sink(
-        sub: pst::Subscriber<rpc_task::TaskResult>,
-    ) -> anyhow::Result<(ps::SubscriptionId, pst::Sink<rpc_task::TaskResult>)> {
-        let id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
-        let sink = sub
-            .assign_id_async(id.clone())
-            .await
-            .map_err(|_| anyhow::anyhow!("Could not get a sink! Request already terminated!"))?;
-        Ok((id, sink))
-    }
-}
-
 impl Rpc for RpcImpl {
     type Metadata = std::sync::Arc<ps::Session>;
 
@@ -66,13 +46,11 @@ impl Rpc for RpcImpl {
         id: file::FileId,
     ) {
         task::spawn(async move {
-            let (task_id, sink) = Self::get_sink(sub)
-                .inspect_err(|_e| { /* TODO: Log this error */ })
-                .await?;
+            let res = rpc_task::run_task(rpc_task::Task::List(id), sub).await;
 
-            rpc_task::list(id, task_id, sink).await;
-
-            Ok::<(), anyhow::Error>(())
+            if let Err(_e) = res {
+                // TODO: Log this error
+            }
         });
     }
 
@@ -92,13 +70,11 @@ impl Rpc for RpcImpl {
         dir: file::FileId,
     ) {
         task::spawn(async {
-            let (task_id, sink) = Self::get_sink(sub)
-                .inspect_err(|_e| { /* TODO: Log this error */ })
-                .await?;
+            let res = rpc_task::run_task(rpc_task::Task::Create { name, dir }, sub).await;
 
-            rpc_task::create(name, dir, task_id, sink).await;
-
-            Ok::<(), anyhow::Error>(())
+            if let Err(_e) = res {
+                // TODO: Log this error
+            }
         });
     }
 
