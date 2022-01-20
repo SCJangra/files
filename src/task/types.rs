@@ -5,8 +5,8 @@ use crate::file;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TaskResult {
-    ListResult(Vec<file::FileMeta>),
-    CreateResult(file::FileId),
+    List(Vec<file::FileMeta>),
+    Create(file::FileId),
 }
 
 pub enum Task {
