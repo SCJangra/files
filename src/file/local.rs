@@ -7,7 +7,6 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
 };
 use tokio_stream::wrappers as tsw;
-use tokio_util::io as uio;
 
 pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     let id = path.to_string_lossy().to_string();
@@ -60,7 +59,7 @@ pub async fn list_meta(path: &path::Path) -> anyhow::Result<Vec<FileMeta>> {
     Ok(files)
 }
 
-pub async fn read(path: &path::Path) -> anyhow::Result<uio::ReaderStream<impl AsyncRead>> {
+pub async fn read(path: &path::Path) -> anyhow::Result<impl AsyncRead> {
     let file = fs::File::open(path).await.with_context(|| {
         format!(
             "Could not read file '{}'",
@@ -68,9 +67,7 @@ pub async fn read(path: &path::Path) -> anyhow::Result<uio::ReaderStream<impl As
         )
     })?;
 
-    let s = uio::ReaderStream::new(file);
-
-    Ok(s)
+    Ok(file)
 }
 
 pub async fn write(path: &path::Path) -> anyhow::Result<impl AsyncWrite> {

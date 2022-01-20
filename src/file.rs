@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::io as uio;
 
 mod local;
 
@@ -43,7 +42,7 @@ pub async fn list_meta(id: &FileId) -> anyhow::Result<Vec<FileMeta>> {
     }
 }
 
-async fn read(id: &FileId) -> anyhow::Result<uio::ReaderStream<impl AsyncRead>> {
+async fn read(id: &FileId) -> anyhow::Result<impl AsyncRead> {
     let FileId(source, id) = id;
     match source {
         FileSource::Local => local::read(path::Path::new(id)).await,
