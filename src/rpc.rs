@@ -23,6 +23,22 @@ pub trait Rpc {
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+
+    #[pubsub(subscription = "create", subscribe, name = "create")]
+    fn create(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        name: String,
+        dir: file::FileId,
+    );
+
+    #[pubsub(subscription = "create", unsubscribe, name = "create_c")]
+    fn create_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 }
 
 pub struct RpcImpl;
@@ -61,6 +77,32 @@ impl Rpc for RpcImpl {
     }
 
     fn list_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
+        Box::pin(rpc_task::cancel_task(id))
+    }
+
+    fn create(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        name: String,
+        dir: file::FileId,
+    ) {
+        task::spawn(async {
+            let (task_id, sink) = Self::get_sink(sub)
+                .inspect_err(|_e| { /* TODO: Log this error */ })
+                .await?;
+
+            rpc_task::create(name, dir, task_id, sink).await;
+
+            Ok::<(), anyhow::Error>(())
+        });
+    }
+
+    fn create_c(
         &self,
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,

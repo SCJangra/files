@@ -1,5 +1,5 @@
 use crate::{file, utils};
-use futures::TryFutureExt;
+use futures::{FutureExt, TryFutureExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
 use std::collections as cl;
@@ -49,4 +49,36 @@ pub async fn cancel_task(id: ps::SubscriptionId) -> jrpc::Result<bool> {
             data: None,
         })
     }
+}
+
+pub async fn create(
+    name: String,
+    dir: file::FileId,
+    task_id: ps::SubscriptionId,
+    sink: pst::Sink<TaskResult>,
+) {
+    ACTIVE.write().await.insert(
+        task_id.clone(),
+        task::spawn(async move {
+            let fut = match name.ends_with('/') {
+                true => file::create_dir(&name, &dir).boxed(),
+                false => file::create_file(&name, &dir).boxed(),
+            };
+
+            let res = fut
+                .map_ok_or_else(
+                    |e| sink.notify(Err(utils::to_rpc_err(e))),
+                    |id| sink.notify(Ok(TaskResult::CreateResult(id))),
+                )
+                .await;
+
+            if let Err(_e) = res {
+                // TODO: log this error
+            }
+
+            {
+                ACTIVE.write().await.remove(&task_id);
+            }
+        }),
+    );
 }

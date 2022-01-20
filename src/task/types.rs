@@ -6,4 +6,5 @@ use crate::file;
 #[serde(untagged)]
 pub enum TaskResult {
     ListResult(Vec<file::FileMeta>),
+    CreateResult(file::FileId),
 }
