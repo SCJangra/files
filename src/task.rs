@@ -52,22 +52,6 @@ pub async fn run_task(task: Task, sub: pst::Subscriber<TaskResult>) -> anyhow::R
     Ok(())
 }
 
-pub async fn list(id: file::FileId, sink: pst::Sink<TaskResult>) -> anyhow::Result<()> {
-    file::list_meta(&id)
-        .map_ok_or_else(
-            |e| {
-                sink.notify(Err(utils::to_rpc_err(e)))
-                    .map_err(|e| anyhow::anyhow!("Could not notify error '{}'", e))
-            },
-            |v| {
-                sink.notify(Ok(TaskResult::ListResult(v)))
-                    .map_err(|e| anyhow::anyhow!("Could not notify result '{}'", e))
-            },
-        )
-        .await?;
-    Ok(())
-}
-
 pub async fn cancel_task(id: ps::SubscriptionId) -> jrpc::Result<bool> {
     let removed = ACTIVE.write().await.remove(&id);
     if let Some(h) = removed {
@@ -82,7 +66,23 @@ pub async fn cancel_task(id: ps::SubscriptionId) -> jrpc::Result<bool> {
     }
 }
 
-pub async fn create(
+async fn list(id: file::FileId, sink: pst::Sink<TaskResult>) -> anyhow::Result<()> {
+    file::list_meta(&id)
+        .map_ok_or_else(
+            |e| {
+                sink.notify(Err(utils::to_rpc_err(e)))
+                    .map_err(|e| anyhow::anyhow!("Could not notify error '{}'", e))
+            },
+            |v| {
+                sink.notify(Ok(TaskResult::List(v)))
+                    .map_err(|e| anyhow::anyhow!("Could not notify result '{}'", e))
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+async fn create(
     name: String,
     dir: file::FileId,
     sink: pst::Sink<TaskResult>,
@@ -98,7 +98,7 @@ pub async fn create(
                 .map_err(|e| anyhow::anyhow!("Could not notify error '{}'", e))
         },
         |id| {
-            sink.notify(Ok(TaskResult::CreateResult(id)))
+            sink.notify(Ok(TaskResult::Create(id)))
                 .map_err(|e| anyhow::anyhow!("Could not notify result '{}'", e))
         },
     )
