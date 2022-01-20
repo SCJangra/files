@@ -57,9 +57,16 @@ async fn write(id: &FileId) -> anyhow::Result<impl AsyncWrite> {
     }
 }
 
-async fn create_file(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
+pub async fn create_file(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
     let FileId(source, id) = dir;
     match source {
         FileSource::Local => local::create_file(name, path::Path::new(id)).await,
+    }
+}
+
+pub async fn create_dir(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
+    let FileId(source, id) = dir;
+    match source {
+        FileSource::Local => local::create_dir(name, path::Path::new(id)).await,
     }
 }

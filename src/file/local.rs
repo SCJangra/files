@@ -89,12 +89,27 @@ pub async fn write(path: &path::Path) -> anyhow::Result<impl AsyncWrite> {
 }
 
 pub async fn create_file(name: &str, dir: &path::Path) -> anyhow::Result<FileId> {
-    let mut path = path::PathBuf::from(dir);
+    let mut path = dir.to_path_buf();
     path.push(name);
 
     write(path.as_path()).await?;
 
     let id = FileId(FileSource::Local, path.to_string_lossy().to_string());
+
+    Ok(id)
+}
+
+pub async fn create_dir(name: &str, dir: &path::Path) -> anyhow::Result<FileId> {
+    let mut path = dir.to_path_buf();
+    path.push(name);
+
+    let id = path.to_string_lossy().to_string();
+
+    fs::create_dir(path)
+        .await
+        .with_context(|| format!("Could not create directory '{}'", id))?;
+
+    let id = FileId(FileSource::Local, id);
 
     Ok(id)
 }
