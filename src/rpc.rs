@@ -10,7 +10,7 @@ pub trait Rpc {
     #[pubsub(subscription = "list", subscribe, name = "list")]
     fn list(&self, m: Self::Metadata, sub: pst::Subscriber<rpc_task::TaskResult>, id: file::FileId);
 
-    #[pubsub(subscription = "list", unsubscribe, name = "cancel_list")]
+    #[pubsub(subscription = "list", unsubscribe, name = "list_c")]
     fn list_c(
         &self,
         m: Option<Self::Metadata>,
