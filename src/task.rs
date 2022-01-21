@@ -31,12 +31,12 @@ pub async fn run_task(task: Task, sub: pst::Subscriber<TaskResult>) -> anyhow::R
         task::spawn(async move {
             match task {
                 Task::List(id) => {
-                    list(id, sink)
+                    list(&id, &sink)
                         .inspect_err(|_e| { /* TODO: Log this error */ })
                         .await?
                 }
                 Task::Create { name, dir } => {
-                    create(name, dir, sink)
+                    create(&name, &dir, &sink)
                         .inspect_err(|_e| { /* TODO: Log this error */ })
                         .await?
                 }
@@ -66,8 +66,8 @@ pub async fn cancel_task(id: ps::SubscriptionId) -> jrpc::Result<bool> {
     }
 }
 
-async fn list(id: file::FileId, sink: pst::Sink<TaskResult>) -> anyhow::Result<()> {
-    file::list_meta(&id)
+async fn list(id: &file::FileId, sink: &pst::Sink<TaskResult>) -> anyhow::Result<()> {
+    file::list_meta(id)
         .map_ok_or_else(
             |e| {
                 sink.notify(Err(utils::to_rpc_err(e)))
@@ -83,13 +83,13 @@ async fn list(id: file::FileId, sink: pst::Sink<TaskResult>) -> anyhow::Result<(
 }
 
 async fn create(
-    name: String,
-    dir: file::FileId,
-    sink: pst::Sink<TaskResult>,
+    name: &str,
+    dir: &file::FileId,
+    sink: &pst::Sink<TaskResult>,
 ) -> anyhow::Result<()> {
     let fut = match name.ends_with('/') {
-        true => file::create_dir(&name, &dir).boxed(),
-        false => file::create_file(&name, &dir).boxed(),
+        true => file::create_dir(name, dir).boxed(),
+        false => file::create_file(name, dir).boxed(),
     };
 
     fut.map_ok_or_else(
