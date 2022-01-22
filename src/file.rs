@@ -1,3 +1,4 @@
+use futures as futs;
 use std::path;
 use tokio::io::{AsyncRead, AsyncWrite};
 pub use types::*;
@@ -5,7 +6,7 @@ pub use types::*;
 mod local;
 mod types;
 
-async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
+pub async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
     let FileId(source, id) = id;
     match source {
         FileSource::Local => local::get_meta(path::Path::new(id)).await,
@@ -20,14 +21,14 @@ pub async fn list_meta(id: &FileId) -> anyhow::Result<Vec<FileMeta>> {
     }
 }
 
-async fn read(id: &FileId) -> anyhow::Result<impl AsyncRead> {
+pub async fn read(id: &FileId) -> anyhow::Result<impl AsyncRead> {
     let FileId(source, id) = id;
     match source {
         FileSource::Local => local::read(path::Path::new(id)).await,
     }
 }
 
-async fn write(id: &FileId) -> anyhow::Result<impl AsyncWrite> {
+pub async fn write(id: &FileId) -> anyhow::Result<impl AsyncWrite> {
     let FileId(source, id) = id;
     match source {
         FileSource::Local => local::write(path::Path::new(id)).await,
@@ -46,4 +47,15 @@ pub async fn create_dir(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
     match source {
         FileSource::Local => local::create_dir(name, path::Path::new(id)).await,
     }
+}
+
+pub async fn copy_file(
+    source: &FileId,
+    dest: &FileId,
+) -> anyhow::Result<(impl AsyncRead, impl AsyncWrite)> {
+    let fm = get_meta(source).await?;
+    let dest = create_file(&fm.name, dest).await?;
+
+    let rw = futs::try_join!(read(source), write(&dest))?;
+    Ok(rw)
 }
