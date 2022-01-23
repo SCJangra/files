@@ -28,10 +28,10 @@ pub async fn read(id: &FileId) -> anyhow::Result<impl AsyncRead> {
     }
 }
 
-pub async fn write(id: &FileId) -> anyhow::Result<impl AsyncWrite> {
+pub async fn write(id: &FileId, overwrite: bool) -> anyhow::Result<impl AsyncWrite> {
     let FileId(source, id) = id;
     match source {
-        FileSource::Local => local::write(path::Path::new(id)).await,
+        FileSource::Local => local::write(path::Path::new(id), overwrite).await,
     }
 }
 
@@ -56,6 +56,6 @@ pub async fn copy_file(
     let fm = get_meta(source).await?;
     let dest = create_file(&fm.name, dest).await?;
 
-    let rw = futs::try_join!(read(source), write(&dest))?;
+    let rw = futs::try_join!(read(source), write(&dest, true))?;
     Ok(rw)
 }
