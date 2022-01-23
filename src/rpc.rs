@@ -32,6 +32,22 @@ pub trait Rpc {
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+
+    #[pubsub(subscription = "copy_file", subscribe, name = "copy_file")]
+    fn copy_file(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        source: file::FileId,
+        dest: file::FileId,
+    );
+
+    #[pubsub(subscription = "copy_file", unsubscribe, name = "copy_file_c")]
+    fn copy_file_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 }
 
 pub struct RpcImpl;
@@ -79,6 +95,30 @@ impl Rpc for RpcImpl {
     }
 
     fn create_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
+        Box::pin(rpc_task::cancel_task(id))
+    }
+
+    fn copy_file(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        source: file::FileId,
+        dest: file::FileId,
+    ) {
+        task::spawn(async move {
+            let res = rpc_task::run_task(rpc_task::Task::CopyFile { source, dest }, sub).await;
+
+            if let Err(_e) = res {
+                // TODO: Log this error
+            }
+        });
+    }
+
+    fn copy_file_c(
         &self,
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,

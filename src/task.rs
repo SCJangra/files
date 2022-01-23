@@ -1,10 +1,13 @@
-use crate::{file, utils};
-use futures::{FutureExt, TryFutureExt};
+use crate::{file, notify_err, notify_ok, utils};
+use futures::{self as futs, FutureExt, TryFutureExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
 use ps::manager::IdProvider;
 use std::collections as cl;
-use tokio::{sync, task};
+use tokio::{
+    io::{self, AsyncBufReadExt, AsyncWriteExt},
+    sync, task,
+};
 pub use types::*;
 
 mod types;
@@ -37,6 +40,11 @@ pub async fn run_task(task: Task, sub: pst::Subscriber<TaskResult>) -> anyhow::R
                 }
                 Task::Create { name, dir } => {
                     create(&name, &dir, &sink)
+                        .inspect_err(|_e| { /* TODO: Log this error */ })
+                        .await?
+                }
+                Task::CopyFile { source, dest } => {
+                    copy_file(&source, &dest, &sink)
                         .inspect_err(|_e| { /* TODO: Log this error */ })
                         .await?
                 }
@@ -103,6 +111,81 @@ async fn create(
         },
     )
     .await?;
+
+    Ok(())
+}
+
+async fn copy_file(
+    source: &file::FileId,
+    dest: &file::FileId,
+    sink: &pst::Sink<TaskResult>,
+) -> anyhow::Result<()> {
+    let res = futs::try_join!(file::get_meta(source), file::get_meta(dest));
+    let (sm, dm) = match res {
+        Err(e) => {
+            notify_err!(sink, utils::to_rpc_err(e))?;
+            return Ok(());
+        }
+        Ok(m) => m,
+    };
+    let (r, w) = match file::copy_file(source, dest).await {
+        Err(e) => {
+            notify_err!(sink, utils::to_rpc_err(e))?;
+            return Ok(());
+        }
+        Ok(rw) => rw,
+    };
+
+    let mut reader = io::BufReader::new(r);
+    let mut writer = io::BufWriter::new(w);
+    let mut done = 0u64;
+    let total = sm.size;
+
+    loop {
+        let res: anyhow::Result<u64> = reader
+            .fill_buf()
+            .map_err(|e| {
+                anyhow::Error::new(e).context(format!("Error while reading file '{}'", sm.name))
+            })
+            .and_then(|buf| {
+                writer
+                    .write_all(buf)
+                    .map_err(|e| {
+                        anyhow::Error::new(e)
+                            .context(format!("Error while writing to file '{}'", dm.name))
+                    })
+                    .map_ok(|_| buf.len() as u64)
+            })
+            .await;
+
+        if let Err(e) = writer.flush().await {
+            let e = anyhow::Error::new(e)
+                .context(format!("Error while writing file to disk '{}'", dm.name));
+            notify_err!(sink, utils::to_rpc_err(e))?;
+            break;
+        }
+
+        let len = match res {
+            Err(e) => {
+                notify_err!(sink, utils::to_rpc_err(e))?;
+                break;
+            }
+            Ok(l) if l == 0 => break,
+            Ok(l) => l,
+        };
+
+        reader.consume(len as usize);
+
+        done += len;
+
+        let progress = CopyFileProgress {
+            total,
+            done,
+            percent: (done as f64) / (total as f64),
+        };
+
+        notify_ok!(sink, TaskResult::CopyFileProgress(progress))?;
+    }
 
     Ok(())
 }
