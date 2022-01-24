@@ -59,3 +59,10 @@ pub async fn copy_file(
     let rw = futs::try_join!(read(source), write(&dest, true))?;
     Ok(rw)
 }
+
+pub async fn rename(id: &FileId, new_name: &str) -> anyhow::Result<FileId> {
+    let FileId(source, id) = id;
+    match source {
+        FileSource::Local => local::rename(path::Path::new(id), new_name).await,
+    }
+}

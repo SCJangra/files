@@ -121,3 +121,19 @@ pub async fn create_dir(name: &str, dir: &path::Path) -> anyhow::Result<FileId> 
 
     Ok(id)
 }
+
+pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<FileId> {
+    let mut path = path::PathBuf::from(file);
+    path.set_file_name(new_name);
+
+    fs::rename(file, path.as_path()).await.with_context(|| {
+        format!(
+            "Could not rename file '{}'",
+            file.to_string_lossy().to_string()
+        )
+    })?;
+
+    let id = FileId(FileSource::Local, path.to_string_lossy().to_string());
+
+    Ok(id)
+}
