@@ -137,3 +137,29 @@ pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<FileId>
 
     Ok(id)
 }
+
+pub async fn move_file(file: &path::Path, dir: &path::Path) -> anyhow::Result<FileId> {
+    let mut dir_pb = path::PathBuf::from(dir);
+    let name = match file.file_name() {
+        Some(n) => n,
+        None => {
+            return Err(anyhow::anyhow!(
+                "Moving files without names is currently not supported!"
+            ));
+        }
+    };
+    dir_pb.push(name);
+
+    let p = dir_pb.to_string_lossy().to_string();
+
+    fs::rename(file, dir_pb.as_path()).await.with_context(|| {
+        format!(
+            "Could not move file '{}' to '{}'",
+            file.to_string_lossy().to_string(),
+            p.clone(),
+        )
+    })?;
+
+    let id = FileId(FileSource::Local, p);
+    Ok(id)
+}
