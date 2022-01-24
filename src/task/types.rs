@@ -10,6 +10,7 @@ pub enum TaskResult {
     CopyFileProgress(CopyFileProgress),
     Rename(file::FileId),
     MoveFile(file::FileId),
+    Delete,
 }
 
 pub enum Task {
@@ -30,6 +31,7 @@ pub enum Task {
         file: file::FileId,
         dir: file::FileId,
     },
+    Delete(file::FileId),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

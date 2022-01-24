@@ -58,6 +58,11 @@ pub async fn run_task(task: Task, sub: pst::Subscriber<TaskResult>) -> anyhow::R
                         .inspect_err(|_e| { /* TODO: Log this error */ })
                         .await?
                 }
+                Task::Delete(file) => {
+                    delete(&file, &sink)
+                        .inspect_err(|_e| { /* TODO: Log this error */ })
+                        .await?
+                }
             };
 
             {
@@ -223,7 +228,18 @@ async fn move_file(
     file::move_file(file, dir)
         .map_ok_or_else(
             |e| notify_err!(sink, utils::to_rpc_err(e)),
-            |id| notify_ok!(sink, TaskResult::Rename(id)),
+            |id| notify_ok!(sink, TaskResult::MoveFile(id)),
+        )
+        .await?;
+
+    Ok(())
+}
+
+async fn delete(file: &file::FileId, sink: &pst::Sink<TaskResult>) -> anyhow::Result<()> {
+    file::delete(file)
+        .map_ok_or_else(
+            |e| notify_err!(sink, utils::to_rpc_err(e)),
+            |_| notify_ok!(sink, TaskResult::Delete),
         )
         .await?;
 
