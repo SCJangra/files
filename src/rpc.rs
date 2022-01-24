@@ -64,6 +64,22 @@ pub trait Rpc {
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+
+    #[pubsub(subscription = "move_file", subscribe, name = "move_file")]
+    fn move_file(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        file: file::FileId,
+        dir: file::FileId,
+    );
+
+    #[pubsub(subscription = "move_file", unsubscribe, name = "move_file_c")]
+    fn move_file_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 }
 
 pub struct RpcImpl;
@@ -159,6 +175,30 @@ impl Rpc for RpcImpl {
     }
 
     fn rename_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
+        Box::pin(rpc_task::cancel_task(id))
+    }
+
+    fn move_file(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        file: file::FileId,
+        dir: file::FileId,
+    ) {
+        task::spawn(async move {
+            let res = rpc_task::run_task(rpc_task::Task::MoveFile { file, dir }, sub).await;
+
+            if let Err(_e) = res {
+                // TODO: Log this error
+            }
+        });
+    }
+
+    fn move_file_c(
         &self,
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,

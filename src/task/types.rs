@@ -9,6 +9,7 @@ pub enum TaskResult {
     Create(file::FileId),
     CopyFileProgress(CopyFileProgress),
     Rename(file::FileId),
+    MoveFile(file::FileId),
 }
 
 pub enum Task {
@@ -24,6 +25,10 @@ pub enum Task {
     Rename {
         file: file::FileId,
         new_name: String,
+    },
+    MoveFile {
+        file: file::FileId,
+        dir: file::FileId,
     },
 }
 
