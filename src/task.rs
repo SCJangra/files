@@ -48,6 +48,11 @@ pub async fn run_task(task: Task, sub: pst::Subscriber<TaskResult>) -> anyhow::R
                         .inspect_err(|_e| { /* TODO: Log this error */ })
                         .await?
                 }
+                Task::Rename { file, new_name } => {
+                    rename(&file, &new_name, &sink)
+                        .inspect_err(|_e| { /* TODO: Log this error */ })
+                        .await?
+                }
             };
 
             {
@@ -186,6 +191,21 @@ async fn copy_file(
 
         notify_ok!(sink, TaskResult::CopyFileProgress(progress))?;
     }
+
+    Ok(())
+}
+
+async fn rename(
+    file: &file::FileId,
+    new_name: &str,
+    sink: &pst::Sink<TaskResult>,
+) -> anyhow::Result<()> {
+    file::rename(file, new_name)
+        .map_ok_or_else(
+            |e| notify_err!(sink, utils::to_rpc_err(e)),
+            |id| notify_ok!(sink, TaskResult::Rename(id)),
+        )
+        .await?;
 
     Ok(())
 }

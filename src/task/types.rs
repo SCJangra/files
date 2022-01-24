@@ -8,6 +8,7 @@ pub enum TaskResult {
     List(Vec<file::FileMeta>),
     Create(file::FileId),
     CopyFileProgress(CopyFileProgress),
+    Rename(file::FileId),
 }
 
 pub enum Task {
@@ -19,6 +20,10 @@ pub enum Task {
     CopyFile {
         source: file::FileId,
         dest: file::FileId,
+    },
+    Rename {
+        file: file::FileId,
+        new_name: String,
     },
 }
 

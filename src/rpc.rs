@@ -48,6 +48,22 @@ pub trait Rpc {
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+
+    #[pubsub(subscription = "rename", subscribe, name = "rename")]
+    fn rename(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        file: file::FileId,
+        new_name: String,
+    );
+
+    #[pubsub(subscription = "rename", unsubscribe, name = "rename_c")]
+    fn rename_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 }
 
 pub struct RpcImpl;
@@ -119,6 +135,30 @@ impl Rpc for RpcImpl {
     }
 
     fn copy_file_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
+        Box::pin(rpc_task::cancel_task(id))
+    }
+
+    fn rename(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<rpc_task::TaskResult>,
+        file: file::FileId,
+        new_name: String,
+    ) {
+        task::spawn(async move {
+            let res = rpc_task::run_task(rpc_task::Task::Rename { file, new_name }, sub).await;
+
+            if let Err(_e) = res {
+                // TODO: Log this error
+            }
+        });
+    }
+
+    fn rename_c(
         &self,
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
