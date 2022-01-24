@@ -74,3 +74,10 @@ pub async fn move_file(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
         }
     }
 }
+
+pub async fn delete(file: &FileId) -> anyhow::Result<()> {
+    let FileId(source, id) = file;
+    match source {
+        FileSource::Local => local::delete(path::Path::new(id)).await,
+    }
+}
