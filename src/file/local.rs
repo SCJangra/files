@@ -164,24 +164,22 @@ pub async fn move_file(file: &path::Path, dir: &path::Path) -> anyhow::Result<Fi
     Ok(id)
 }
 
-pub async fn delete(file: &path::Path) -> anyhow::Result<()> {
-    let m = get_meta(file).await?;
+pub async fn delete_file(file: &path::Path) -> anyhow::Result<()> {
+    fs::remove_file(file).await.with_context(|| {
+        format!(
+            "Could not delete file '{}'",
+            file.to_string_lossy().to_string()
+        )
+    })?;
+    Ok(())
+}
 
-    if let FileType::Dir = m.file_type {
-        fs::remove_dir(file).await.with_context(|| {
-            format!(
-                "Could not delete directory '{}'",
-                file.to_string_lossy().to_string()
-            )
-        })?;
-    } else {
-        fs::remove_file(file).await.with_context(|| {
-            format!(
-                "Could not delete file '{}'",
-                file.to_string_lossy().to_string()
-            )
-        })?;
-    }
-
+pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<()> {
+    fs::remove_dir(dir).await.with_context(|| {
+        format!(
+            "Could not delete directory '{}'",
+            dir.to_string_lossy().to_string()
+        )
+    })?;
     Ok(())
 }
