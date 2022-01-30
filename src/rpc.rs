@@ -252,7 +252,8 @@ async fn copy_file(
 
 async fn cancel_sub(id: ps::SubscriptionId) -> jrpc::Result<bool> {
     let removed = ACTIVE.write().await.remove(&id);
-    if removed.is_some() {
+    if let Some(r) = removed {
+        r.abort();
         Ok(true)
     } else {
         Err(jrpc::Error {
