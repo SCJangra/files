@@ -58,7 +58,7 @@ pub trait Rpc {
     fn copy_file(
         &self,
         m: Self::Metadata,
-        sub: pst::Subscriber<CopyFileProgress>,
+        sub: pst::Subscriber<Option<CopyFileProgress>>,
         source: file::FileId,
         dest: file::FileId,
     );
@@ -136,7 +136,7 @@ impl Rpc for RpcImpl {
     fn copy_file(
         &self,
         _m: Self::Metadata,
-        sub: pst::Subscriber<CopyFileProgress>,
+        sub: pst::Subscriber<Option<CopyFileProgress>>,
         source: file::FileId,
         dest: file::FileId,
     ) {
@@ -178,7 +178,7 @@ impl Rpc for RpcImpl {
 async fn copy_file(
     source: &file::FileId,
     dest: &file::FileId,
-    sink: &pst::Sink<CopyFileProgress>,
+    sink: &pst::Sink<Option<CopyFileProgress>>,
 ) -> anyhow::Result<()> {
     let res = futs::try_join!(file::get_meta(source), file::get_meta(dest));
     let (sm, dm) = match res {
@@ -230,7 +230,10 @@ async fn copy_file(
                 notify_err!(sink, utils::to_rpc_err(e))?;
                 break;
             }
-            Ok(l) if l == 0 => break,
+            Ok(l) if l == 0 => {
+                notify_ok!(sink, None)?;
+                break;
+            }
             Ok(l) => l,
         };
 
@@ -244,7 +247,7 @@ async fn copy_file(
             percent: (done as f64) / (total as f64),
         };
 
-        notify_ok!(sink, progress)?;
+        notify_ok!(sink, Some(progress))?;
     }
 
     Ok(())
