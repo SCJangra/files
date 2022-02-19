@@ -33,6 +33,9 @@ lazy_static::lazy_static! {
 pub trait Rpc {
     type Metadata;
 
+    #[rpc(name = "get_meta")]
+    fn get_meta(&self, id: file::FileId) -> JrpcFutResult<file::FileMeta>;
+
     #[rpc(name = "list")]
     fn list(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>>;
 
@@ -75,6 +78,13 @@ pub struct RpcImpl;
 
 impl Rpc for RpcImpl {
     type Metadata = std::sync::Arc<ps::Session>;
+
+    fn get_meta(&self, id: file::FileId) -> JrpcFutResult<file::FileMeta> {
+        Box::pin(async move {
+            let m = file::get_meta(&id).await.map_err(utils::to_rpc_err)?;
+            Ok(m)
+        })
+    }
 
     fn list(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
         Box::pin(async move {
