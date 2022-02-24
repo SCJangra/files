@@ -10,6 +10,10 @@ use tokio_stream::wrappers as tsw;
 
 pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     let id = path.to_string_lossy().to_string();
+    let parent_id = match path.parent() {
+        Some(p) => Some(FileId(FileSource::Local, p.to_string_lossy().to_string())),
+        None => None,
+    };
 
     let name = match path.file_name() {
         Some(n) => n.to_string_lossy().to_string(),
@@ -37,6 +41,7 @@ pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
         id,
         file_type,
         size,
+        parent_id,
     })
 }
 

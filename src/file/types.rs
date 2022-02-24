@@ -6,6 +6,7 @@ pub struct FileMeta {
     pub file_type: FileType,
     pub size: u64,
     pub id: FileId,
+    pub parent_id: Option<FileId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
