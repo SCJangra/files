@@ -39,6 +39,9 @@ pub trait Rpc {
     #[rpc(name = "list")]
     fn list(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>>;
 
+    #[rpc(name = "list_all")]
+    fn list_all(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>>;
+
     #[rpc(name = "create_file")]
     fn create_file(&self, name: String, dir: file::FileId) -> JrpcFutResult<file::FileId>;
 
@@ -90,6 +93,28 @@ impl Rpc for RpcImpl {
         Box::pin(async move {
             let f = file::list_meta(&dir).await.map_err(utils::to_rpc_err)?;
             Ok(f)
+        })
+    }
+
+    fn list_all(&self, id: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
+        Box::pin(async move {
+            let m = file::get_meta(&id).await.map_err(utils::to_rpc_err)?;
+            let mut stack = vec![m];
+            let mut files = vec![];
+
+            while let Some(f) = stack.pop() {
+                if let file::FileType::Dir = f.file_type {
+                    let mut l = file::list_meta(&f.id).await.map_err(utils::to_rpc_err)?;
+                    files.push(f);
+
+                    while let Some(f) = l.pop() {
+                        stack.push(f)
+                    }
+                } else {
+                    files.push(f);
+                }
+            }
+            Ok(files)
         })
     }
 
