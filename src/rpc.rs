@@ -4,7 +4,7 @@ use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
 use ps::manager::IdProvider;
 use serde::{Deserialize, Serialize};
-use std::collections as cl;
+use std::{collections as cl, time};
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt},
     sync, task,
@@ -67,6 +67,7 @@ pub trait Rpc {
         sub: pst::Subscriber<Option<CopyFileProgress>>,
         source: file::FileId,
         dest: file::FileId,
+        prog_interval: Option<u128>,
     );
 
     #[pubsub(subscription = "copy_file", unsubscribe, name = "copy_file_c")]
@@ -174,6 +175,7 @@ impl Rpc for RpcImpl {
         sub: pst::Subscriber<Option<CopyFileProgress>>,
         source: file::FileId,
         dest: file::FileId,
+        prog_interval: Option<u128>,
     ) {
         task::spawn(async move {
             let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
@@ -185,7 +187,12 @@ impl Rpc for RpcImpl {
             ACTIVE.write().await.insert(
                 task_id.clone(),
                 task::spawn(async move {
-                    copy_file(&source, &dest, &sink)
+                    let prog_interval = match prog_interval {
+                        Some(i) => i,
+                        None => 1000u128,
+                    };
+
+                    copy_file(&source, &dest, &sink, prog_interval)
                         .inspect_err(|_e| { /* TODO: Log this error */ })
                         .await?;
 
@@ -214,6 +221,7 @@ async fn copy_file(
     source: &file::FileId,
     dest: &file::FileId,
     sink: &pst::Sink<Option<CopyFileProgress>>,
+    prog_interval: u128,
 ) -> anyhow::Result<()> {
     let res = futs::try_join!(file::get_meta(source), file::get_meta(dest));
     let (sm, dm) = match res {
@@ -235,6 +243,7 @@ async fn copy_file(
     let mut writer = io::BufWriter::new(w);
     let mut done = 0u64;
     let total = sm.size;
+    let mut instant = time::Instant::now();
 
     loop {
         let res: anyhow::Result<u64> = reader
@@ -275,6 +284,12 @@ async fn copy_file(
         reader.consume(len as usize);
 
         done += len;
+
+        if instant.elapsed().as_millis() < prog_interval {
+            continue;
+        }
+
+        instant = time::Instant::now();
 
         let progress = CopyFileProgress {
             total,
