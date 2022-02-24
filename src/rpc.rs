@@ -1,4 +1,5 @@
 use files::{file, notify_err, notify_ok, utils};
+use futs::StreamExt;
 use futures::{self as futs, TryFutureExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
@@ -9,6 +10,7 @@ use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt},
     sync, task,
 };
+use tokio_stream::wrappers as tsw;
 
 type JrpcFutResult<T> = jrpc::BoxFuture<jrpc::Result<T>>;
 
@@ -20,10 +22,10 @@ pub struct CopyFileProgress {
 }
 
 lazy_static::lazy_static! {
-    pub static ref ACTIVE: sync::RwLock<cl::HashMap<ps::SubscriptionId, task::JoinHandle<anyhow::Result<()>>>> =
+    pub static ref ACTIVE: sync::RwLock<cl::HashMap<ps::SubscriptionId, task::JoinHandle<()>>> =
         sync::RwLock::new(cl::HashMap::<
             ps::SubscriptionId,
-            task::JoinHandle<anyhow::Result<()>>,
+            task::JoinHandle<()>
         >::new());
     static ref RAND_STR_ID: ps::manager::RandomStringIdProvider =
         ps::manager::RandomStringIdProvider::new();
@@ -76,6 +78,21 @@ pub trait Rpc {
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+
+    #[pubsub(subscription = "walk", subscribe, name = "walk")]
+    fn walk(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<Option<file::FileMeta>>,
+        dir: file::FileId,
+    );
+
+    #[pubsub(subscription = "walk", unsubscribe, name = "walk_c")]
+    fn walk_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 }
 
 pub struct RpcImpl;
@@ -99,22 +116,15 @@ impl Rpc for RpcImpl {
 
     fn list_all(&self, id: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
         Box::pin(async move {
-            let m = file::get_meta(&id).await.map_err(utils::to_rpc_err)?;
-            let mut stack = vec![m];
-            let mut files = vec![];
-
-            while let Some(f) = stack.pop() {
-                if let file::FileType::Dir = f.file_type {
-                    let mut l = file::list_meta(&f.id).await.map_err(utils::to_rpc_err)?;
-                    files.push(f);
-
-                    while let Some(f) = l.pop() {
-                        stack.push(f)
+            let files = tsw::UnboundedReceiverStream::new(file::walk(&id))
+                .filter_map(|res| async move {
+                    match res {
+                        Ok(m) => Some(m),
+                        Err(_e) => None, // TODO: Log this error
                     }
-                } else {
-                    files.push(f);
-                }
-            }
+                })
+                .collect::<Vec<file::FileMeta>>()
+                .await;
             Ok(files)
         })
     }
@@ -192,15 +202,15 @@ impl Rpc for RpcImpl {
                         None => 1000u128,
                     };
 
-                    copy_file(&source, &dest, &sink, prog_interval)
-                        .inspect_err(|_e| { /* TODO: Log this error */ })
-                        .await?;
+                    let res = copy_file(&source, &dest, &sink, prog_interval).await;
+
+                    if let Err(_e) = res {
+                        // TODO: Log this error
+                    }
 
                     {
                         ACTIVE.write().await.remove(&task_id);
                     }
-
-                    anyhow::Ok(())
                 }),
             );
 
@@ -213,6 +223,60 @@ impl Rpc for RpcImpl {
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> JrpcFutResult<bool> {
+        Box::pin(cancel_sub(id))
+    }
+
+    fn walk(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<Option<file::FileMeta>>,
+        dir: file::FileId,
+    ) {
+        task::spawn(async move {
+            let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
+            let sink = sub
+                .assign_id_async(task_id.clone())
+                .inspect_err(|_e| { /* TODO: Log this error */ })
+                .await?;
+
+            ACTIVE.write().await.insert(
+                task_id.clone(),
+                task::spawn(async move {
+                    let mut r = file::walk(&dir);
+
+                    while let Some(res) = r.recv().await {
+                        let nres = match res {
+                            Ok(m) => notify_ok!(sink, Some(m)),
+                            Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
+                        };
+
+                        if let Err(_e) = nres {
+                            // TODO: log this error
+                            break;
+                        }
+                    }
+
+                    let nres = notify_ok!(sink, None);
+
+                    if let Err(_e) = nres {
+                        // TODO: log this error
+                    }
+
+                    {
+                        ACTIVE.write().await.remove(&task_id);
+                    }
+                }),
+            );
+
+            Ok::<(), ()>(())
+        });
+    }
+
+    fn walk_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
         Box::pin(cancel_sub(id))
     }
 }

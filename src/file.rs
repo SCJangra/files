@@ -1,6 +1,9 @@
 use futures as futs;
 use std::path;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    sync, task,
+};
 pub use types::*;
 
 mod local;
@@ -87,4 +90,50 @@ pub async fn delete_dir(dir: &FileId) -> anyhow::Result<()> {
     match source {
         FileSource::Local => local::delete_dir(path::Path::new(id)).await,
     }
+}
+
+pub fn walk(dir: &FileId) -> sync::mpsc::UnboundedReceiver<anyhow::Result<FileMeta>> {
+    let (s, r) = sync::mpsc::unbounded_channel();
+    let dir = dir.to_owned();
+    task::spawn(async move {
+        let m = match get_meta(&dir).await {
+            Err(e) => {
+                s.send(Err(e))
+                    .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
+
+                return anyhow::Ok(());
+            }
+            Ok(m) => m,
+        };
+
+        let mut stack = vec![m];
+
+        while let Some(f) = stack.pop() {
+            if let FileType::Dir = f.file_type {
+                let mut l = match list_meta(&f.id).await {
+                    Err(e) => {
+                        s.send(Err(e))
+                            .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
+
+                        continue;
+                    }
+                    Ok(l) => l,
+                };
+
+                s.send(Ok(f))
+                    .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
+
+                while let Some(f) = l.pop() {
+                    stack.push(f);
+                }
+            } else {
+                s.send(Ok(f))
+                    .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
+            }
+        }
+
+        anyhow::Ok(())
+    });
+
+    return r;
 }
