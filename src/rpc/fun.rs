@@ -150,68 +150,6 @@ pub async fn walk(
     Ok(())
 }
 
-pub async fn delete_file_bulk(
-    files: &Vec<file::FileId>,
-    sink: &pst::Sink<Option<Progress>>,
-    prog_interval: u128,
-) -> anyhow::Result<()> {
-    let total = files.len() as u64;
-    let mut done = 0u64;
-
-    stream::iter(files)
-        .map(|f| anyhow::Ok(f))
-        .try_for_each_concurrent(100, |f| async move {
-            match file::delete_file(f).await {
-                Ok(_) => {
-                    done += 1;
-                    let progress = Progress {
-                        total,
-                        done,
-                        percent: (done as f64) / (total as f64),
-                    };
-
-                    notify_ok!(sink, Some(progress))
-                }
-                Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
-            }
-        })
-        .await
-        .and_then(|_| notify_ok!(sink, None))?;
-
-    Ok(())
-}
-
-pub async fn delete_dir_bulk(
-    dirs: &Vec<file::FileId>,
-    sink: &pst::Sink<Option<Progress>>,
-    prog_interval: u128,
-) -> anyhow::Result<()> {
-    let total = dirs.len() as u64;
-    let mut done = 0u64;
-
-    stream::iter(dirs)
-        .map(|d| anyhow::Ok(d))
-        .try_for_each_concurrent(100, |d| async move {
-            match file::delete_dir(d).await {
-                Ok(_) => {
-                    done += 1;
-                    let progress = Progress {
-                        total,
-                        done,
-                        percent: (done as f64) / (total as f64),
-                    };
-
-                    notify_ok!(sink, Some(progress))
-                }
-                Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
-            }
-        })
-        .await
-        .and_then(|_| notify_ok!(sink, None))?;
-
-    Ok(())
-}
-
 pub async fn delete_bulk(
     ft: &file::FileType,
     files: &Vec<file::FileId>,
