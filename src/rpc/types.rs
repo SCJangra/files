@@ -9,8 +9,3 @@ pub struct Progress {
 }
 
 pub type JrpcFutResult<T> = jrpc::BoxFuture<jrpc::Result<T>>;
-
-pub enum Delete {
-    File,
-    Dir,
-}

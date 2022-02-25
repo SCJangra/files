@@ -213,7 +213,7 @@ pub async fn delete_dir_bulk(
 }
 
 pub async fn delete_bulk(
-    d: Delete,
+    ft: &file::FileType,
     files: &Vec<file::FileId>,
     sink: &pst::Sink<Option<Progress>>,
     prog_interval: u128,
@@ -224,9 +224,9 @@ pub async fn delete_bulk(
     let mut instant = time::Instant::now();
 
     while let Some(f) = files.iter().next() {
-        let res = match d {
-            Delete::File => file::delete_file(f).await,
-            Delete::Dir => file::delete_dir(f).await,
+        let res = match ft {
+            file::FileType::Dir => file::delete_dir(f).await,
+            _ => file::delete_file(f).await,
         };
         match res {
             Ok(_) => {
