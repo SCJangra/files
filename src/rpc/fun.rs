@@ -1,5 +1,5 @@
 use files::{file, notify_err, notify_ok, utils};
-use futures::{self as futs, stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{self as futs, TryFutureExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, manager::IdProvider, typed as pst};
 use std::{collections as cl, time};
