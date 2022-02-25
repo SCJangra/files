@@ -1,36 +1,16 @@
-use files::{file, notify_err, notify_ok, utils};
-use futs::{stream, StreamExt, TryStreamExt};
-use futures::{self as futs, TryFutureExt};
+mod fun;
+mod types;
+
+use files::{file, utils};
+use fun::*;
+use futures::{StreamExt, TryFutureExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
-use ps::manager::IdProvider;
-use serde::{Deserialize, Serialize};
-use std::{collections as cl, time};
-use tokio::{
-    io::{self, AsyncBufReadExt, AsyncWriteExt},
-    sync, task,
-};
+use tokio::task;
 use tokio_stream::wrappers as tsw;
+use types::*;
 
-type JrpcFutResult<T> = jrpc::BoxFuture<jrpc::Result<T>>;
 pub struct RpcImpl;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CopyFileProgress {
-    total: u64,
-    done: u64,
-    percent: f64,
-}
-
-lazy_static::lazy_static! {
-    pub static ref ACTIVE: sync::RwLock<cl::HashMap<ps::SubscriptionId, task::JoinHandle<()>>> =
-        sync::RwLock::new(cl::HashMap::<
-            ps::SubscriptionId,
-            task::JoinHandle<()>
-        >::new());
-    static ref RAND_STR_ID: ps::manager::RandomStringIdProvider =
-        ps::manager::RandomStringIdProvider::new();
-}
 
 #[jsonrpc_derive::rpc(server)]
 pub trait Rpc {
@@ -67,7 +47,7 @@ pub trait Rpc {
     fn copy_file(
         &self,
         m: Self::Metadata,
-        sub: pst::Subscriber<Option<CopyFileProgress>>,
+        sub: pst::Subscriber<Option<Progress>>,
         source: file::FileId,
         dest: file::FileId,
         prog_interval: Option<u128>,
@@ -103,8 +83,9 @@ pub trait Rpc {
     fn delete_file_bulk(
         &self,
         m: Self::Metadata,
-        sub: pst::Subscriber<Option<bool>>,
+        sub: pst::Subscriber<Option<Progress>>,
         files: Vec<file::FileId>,
+        prog_interval: Option<u128>,
     );
 
     #[pubsub(
@@ -122,8 +103,9 @@ pub trait Rpc {
     fn delete_dir_bulk(
         &self,
         m: Self::Metadata,
-        sub: pst::Subscriber<Option<bool>>,
+        sub: pst::Subscriber<Option<Progress>>,
         dirs: Vec<file::FileId>,
+        prog_interval: Option<u128>,
     );
 
     #[pubsub(
@@ -223,25 +205,20 @@ impl Rpc for RpcImpl {
     fn copy_file(
         &self,
         _m: Self::Metadata,
-        sub: pst::Subscriber<Option<CopyFileProgress>>,
+        sub: pst::Subscriber<Option<Progress>>,
         source: file::FileId,
         dest: file::FileId,
         prog_interval: Option<u128>,
     ) {
         task::spawn(async move {
-            let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
-            let sink = sub
-                .assign_id_async(task_id.clone())
+            let (task_id, sink) = get_sink(sub)
                 .inspect_err(|_e| { /* TODO: Log this error */ })
                 .await?;
 
             ACTIVE.write().await.insert(
                 task_id.clone(),
                 task::spawn(async move {
-                    let prog_interval = match prog_interval {
-                        Some(i) => i,
-                        None => 1000u128,
-                    };
+                    let prog_interval = prog_interval.unwrap_or(1000);
 
                     let res = copy_file(&source, &dest, &sink, prog_interval).await;
 
@@ -255,7 +232,7 @@ impl Rpc for RpcImpl {
                 }),
             );
 
-            Ok::<(), ()>(())
+            anyhow::Ok(())
         });
     }
 
@@ -274,33 +251,17 @@ impl Rpc for RpcImpl {
         dir: file::FileId,
     ) {
         task::spawn(async move {
-            let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
-            let sink = sub
-                .assign_id_async(task_id.clone())
+            let (task_id, sink) = get_sink(sub)
                 .inspect_err(|_e| { /* TODO: Log this error */ })
                 .await?;
 
             ACTIVE.write().await.insert(
                 task_id.clone(),
                 task::spawn(async move {
-                    let mut r = file::walk(&dir);
+                    let res = walk(&dir, &sink).await;
 
-                    while let Some(res) = r.recv().await {
-                        let nres = match res {
-                            Ok(m) => notify_ok!(sink, Some(m)),
-                            Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
-                        };
-
-                        if let Err(_e) = nres {
-                            // TODO: log this error
-                            break;
-                        }
-                    }
-
-                    let nres = notify_ok!(sink, None);
-
-                    if let Err(_e) = nres {
-                        // TODO: log this error
+                    if let Err(_e) = res {
+                        // TODO: Log this error
                     }
 
                     {
@@ -309,7 +270,7 @@ impl Rpc for RpcImpl {
                 }),
             );
 
-            Ok::<(), ()>(())
+            anyhow::Ok(())
         });
     }
 
@@ -324,46 +285,32 @@ impl Rpc for RpcImpl {
     fn delete_file_bulk(
         &self,
         _m: Self::Metadata,
-        sub: pst::Subscriber<Option<bool>>,
+        sub: pst::Subscriber<Option<Progress>>,
         files: Vec<file::FileId>,
+        prog_interval: Option<u128>,
     ) {
         task::spawn(async move {
-            let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
-            let sink = sub
-                .assign_id_async(task_id.clone())
+            let (task_id, sink) = get_sink(sub)
                 .inspect_err(|_e| { /* TODO: Log this error */ })
                 .await?;
 
-            let delete_files = move |task_id: ps::SubscriptionId| async move {
-                let files = stream::iter(files);
+            ACTIVE.write().await.insert(
+                task_id.clone(),
+                task::spawn(async move {
+                    let prog_interval = prog_interval.unwrap_or(1000);
+                    let res = delete_bulk(Delete::File, &files, &sink, prog_interval).await;
 
-                let res = files
-                    .map(|f| async move { file::delete_file(&f).await })
-                    .buffer_unordered(100)
-                    .map(|r: anyhow::Result<()>| match r {
-                        Ok(_) => notify_ok!(sink, Some(true)),
-                        Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
-                    })
-                    .try_for_each(|_| async move { Ok(()) })
-                    .await;
+                    if let Err(_e) = res {
+                        // TODO: Log this error
+                    }
 
-                let res = res.and_then(|_| notify_ok!(sink, None));
+                    {
+                        ACTIVE.write().await.remove(&task_id);
+                    }
+                }),
+            );
 
-                if let Err(_e) = res {
-                    // TODO: Log this error
-                }
-
-                {
-                    ACTIVE.write().await.remove(&task_id);
-                }
-            };
-
-            ACTIVE
-                .write()
-                .await
-                .insert(task_id.clone(), task::spawn(delete_files(task_id)));
-
-            Ok::<(), ()>(())
+            anyhow::Ok(())
         });
     }
 
@@ -378,46 +325,32 @@ impl Rpc for RpcImpl {
     fn delete_dir_bulk(
         &self,
         _m: Self::Metadata,
-        sub: pst::Subscriber<Option<bool>>,
+        sub: pst::Subscriber<Option<Progress>>,
         dirs: Vec<file::FileId>,
+        prog_interval: Option<u128>,
     ) {
         task::spawn(async move {
-            let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
-            let sink = sub
-                .assign_id_async(task_id.clone())
+            let (task_id, sink) = get_sink(sub)
                 .inspect_err(|_e| { /* TODO: Log this error */ })
                 .await?;
 
-            let delete_dirs = move |task_id: ps::SubscriptionId| async move {
-                let dirs = stream::iter(dirs);
+            ACTIVE.write().await.insert(
+                task_id.clone(),
+                task::spawn(async move {
+                    let prog_interval = prog_interval.unwrap_or(1000);
+                    let res = delete_bulk(Delete::Dir, &dirs, &sink, prog_interval).await;
 
-                let res = dirs
-                    .map(|d| async move { file::delete_dir(&d).await })
-                    .buffer_unordered(100)
-                    .map(|r: anyhow::Result<()>| match r {
-                        Ok(_) => notify_ok!(sink, Some(true)),
-                        Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
-                    })
-                    .try_for_each(|_| async move { Ok(()) })
-                    .await;
+                    if let Err(_e) = res {
+                        // TODO: Log this error
+                    }
 
-                let res = res.and_then(|_| notify_ok!(sink, None));
+                    {
+                        ACTIVE.write().await.remove(&task_id);
+                    }
+                }),
+            );
 
-                if let Err(_e) = res {
-                    // TODO: Log this error
-                }
-
-                {
-                    ACTIVE.write().await.remove(&task_id);
-                }
-            };
-
-            ACTIVE
-                .write()
-                .await
-                .insert(task_id.clone(), task::spawn(delete_dirs(task_id)));
-
-            Ok::<(), ()>(())
+            anyhow::Ok(())
         });
     }
 
@@ -427,105 +360,5 @@ impl Rpc for RpcImpl {
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
         Box::pin(cancel_sub(id))
-    }
-}
-
-async fn copy_file(
-    source: &file::FileId,
-    dest: &file::FileId,
-    sink: &pst::Sink<Option<CopyFileProgress>>,
-    prog_interval: u128,
-) -> anyhow::Result<()> {
-    let res = futs::try_join!(file::get_meta(source), file::get_meta(dest));
-    let (sm, dm) = match res {
-        Err(e) => {
-            notify_err!(sink, utils::to_rpc_err(e))?;
-            return Ok(());
-        }
-        Ok(m) => m,
-    };
-    let (r, w) = match file::copy_file(source, dest).await {
-        Err(e) => {
-            notify_err!(sink, utils::to_rpc_err(e))?;
-            return Ok(());
-        }
-        Ok(rw) => rw,
-    };
-
-    let mut reader = io::BufReader::new(r);
-    let mut writer = io::BufWriter::new(w);
-    let mut done = 0u64;
-    let total = sm.size;
-    let mut instant = time::Instant::now();
-
-    loop {
-        let res: anyhow::Result<u64> = reader
-            .fill_buf()
-            .map_err(|e| {
-                anyhow::Error::new(e).context(format!("Error while reading file '{}'", sm.name))
-            })
-            .and_then(|buf| {
-                writer
-                    .write_all(buf)
-                    .map_err(|e| {
-                        anyhow::Error::new(e)
-                            .context(format!("Error while writing to file '{}'", dm.name))
-                    })
-                    .map_ok(|_| buf.len() as u64)
-            })
-            .await;
-
-        if let Err(e) = writer.flush().await {
-            let e = anyhow::Error::new(e)
-                .context(format!("Error while writing file to disk '{}'", dm.name));
-            notify_err!(sink, utils::to_rpc_err(e))?;
-            break;
-        }
-
-        let len = match res {
-            Err(e) => {
-                notify_err!(sink, utils::to_rpc_err(e))?;
-                break;
-            }
-            Ok(l) if l == 0 => {
-                notify_ok!(sink, None)?;
-                break;
-            }
-            Ok(l) => l,
-        };
-
-        reader.consume(len as usize);
-
-        done += len;
-
-        if instant.elapsed().as_millis() < prog_interval {
-            continue;
-        }
-
-        instant = time::Instant::now();
-
-        let progress = CopyFileProgress {
-            total,
-            done,
-            percent: (done as f64) / (total as f64),
-        };
-
-        notify_ok!(sink, Some(progress))?;
-    }
-
-    Ok(())
-}
-
-async fn cancel_sub(id: ps::SubscriptionId) -> jrpc::Result<bool> {
-    let removed = ACTIVE.write().await.remove(&id);
-    if let Some(r) = removed {
-        r.abort();
-        Ok(true)
-    } else {
-        Err(jrpc::Error {
-            code: jrpc::ErrorCode::InvalidParams,
-            message: "Invalid subscription.".into(),
-            data: None,
-        })
     }
 }
