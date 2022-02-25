@@ -1,5 +1,5 @@
 use files::{file, notify_err, notify_ok, utils};
-use futs::StreamExt;
+use futs::{stream, StreamExt, TryStreamExt};
 use futures::{self as futs, TryFutureExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
@@ -13,6 +13,7 @@ use tokio::{
 use tokio_stream::wrappers as tsw;
 
 type JrpcFutResult<T> = jrpc::BoxFuture<jrpc::Result<T>>;
+pub struct RpcImpl;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CopyFileProgress {
@@ -93,9 +94,49 @@ pub trait Rpc {
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
-}
 
-pub struct RpcImpl;
+    #[pubsub(
+        subscription = "delete_file_bulk",
+        subscribe,
+        name = "delete_file_bulk"
+    )]
+    fn delete_file_bulk(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<Option<bool>>,
+        files: Vec<file::FileId>,
+    );
+
+    #[pubsub(
+        subscription = "delete_file_bulk",
+        unsubscribe,
+        name = "delete_file_bulk_c"
+    )]
+    fn delete_file_bulk_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+
+    #[pubsub(subscription = "delete_dir_bulk", subscribe, name = "delete_dir_bulk")]
+    fn delete_dir_bulk(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<Option<bool>>,
+        dirs: Vec<file::FileId>,
+    );
+
+    #[pubsub(
+        subscription = "delete_dir_bulk",
+        unsubscribe,
+        name = "delete_dir_bulk_c"
+    )]
+    fn delete_dir_bulk_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+}
 
 impl Rpc for RpcImpl {
     type Metadata = std::sync::Arc<ps::Session>;
@@ -273,6 +314,114 @@ impl Rpc for RpcImpl {
     }
 
     fn walk_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
+        Box::pin(cancel_sub(id))
+    }
+
+    fn delete_file_bulk(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<Option<bool>>,
+        files: Vec<file::FileId>,
+    ) {
+        task::spawn(async move {
+            let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
+            let sink = sub
+                .assign_id_async(task_id.clone())
+                .inspect_err(|_e| { /* TODO: Log this error */ })
+                .await?;
+
+            let delete_files = move |task_id: ps::SubscriptionId| async move {
+                let files = stream::iter(files);
+
+                let res = files
+                    .map(|f| async move { file::delete_file(&f).await })
+                    .buffer_unordered(100)
+                    .map(|r: anyhow::Result<()>| match r {
+                        Ok(_) => notify_ok!(sink, Some(true)),
+                        Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
+                    })
+                    .try_for_each(|_| async move { Ok(()) })
+                    .await;
+
+                let res = res.and_then(|_| notify_ok!(sink, None));
+
+                if let Err(_e) = res {
+                    // TODO: Log this error
+                }
+
+                {
+                    ACTIVE.write().await.remove(&task_id);
+                }
+            };
+
+            ACTIVE
+                .write()
+                .await
+                .insert(task_id.clone(), task::spawn(delete_files(task_id)));
+
+            Ok::<(), ()>(())
+        });
+    }
+
+    fn delete_file_bulk_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
+        Box::pin(cancel_sub(id))
+    }
+
+    fn delete_dir_bulk(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<Option<bool>>,
+        dirs: Vec<file::FileId>,
+    ) {
+        task::spawn(async move {
+            let task_id = ps::SubscriptionId::String(RAND_STR_ID.next_id());
+            let sink = sub
+                .assign_id_async(task_id.clone())
+                .inspect_err(|_e| { /* TODO: Log this error */ })
+                .await?;
+
+            let delete_dirs = move |task_id: ps::SubscriptionId| async move {
+                let dirs = stream::iter(dirs);
+
+                let res = dirs
+                    .map(|d| async move { file::delete_dir(&d).await })
+                    .buffer_unordered(100)
+                    .map(|r: anyhow::Result<()>| match r {
+                        Ok(_) => notify_ok!(sink, Some(true)),
+                        Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
+                    })
+                    .try_for_each(|_| async move { Ok(()) })
+                    .await;
+
+                let res = res.and_then(|_| notify_ok!(sink, None));
+
+                if let Err(_e) = res {
+                    // TODO: Log this error
+                }
+
+                {
+                    ACTIVE.write().await.remove(&task_id);
+                }
+            };
+
+            ACTIVE
+                .write()
+                .await
+                .insert(task_id.clone(), task::spawn(delete_dirs(task_id)));
+
+            Ok::<(), ()>(())
+        });
+    }
+
+    fn delete_dir_bulk_c(
         &self,
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
