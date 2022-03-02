@@ -2,7 +2,8 @@ use futures as futs;
 use std::path;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync, task,
+    sync::mpsc::{unbounded_channel, UnboundedReceiver},
+    task,
 };
 pub use types::*;
 
@@ -92,48 +93,38 @@ pub async fn delete_dir(dir: &FileId) -> anyhow::Result<()> {
     }
 }
 
-pub fn walk(dir: &FileId) -> sync::mpsc::UnboundedReceiver<anyhow::Result<FileMeta>> {
-    let (s, r) = sync::mpsc::unbounded_channel();
-    let dir = dir.to_owned();
+pub async fn dfs(id: &FileId) -> anyhow::Result<UnboundedReceiver<anyhow::Result<FileMeta>>> {
+    let (s, r) = unbounded_channel();
+    let m = get_meta(id).await?;
+
     task::spawn(async move {
-        let m = match get_meta(&dir).await {
-            Err(e) => {
-                s.send(Err(e))
-                    .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
-
-                return anyhow::Ok(());
-            }
-            Ok(m) => m,
-        };
-
         let mut stack = vec![m];
 
-        while let Some(f) = stack.pop() {
-            if let FileType::Dir = f.file_type {
-                let mut l = match list_meta(&f.id).await {
-                    Err(e) => {
-                        s.send(Err(e))
-                            .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
-
-                        continue;
-                    }
-                    Ok(l) => l,
-                };
-
-                s.send(Ok(f))
-                    .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
-
-                while let Some(f) = l.pop() {
-                    stack.push(f);
+        while let Some(m) = stack.pop() {
+            let list = async {
+                if let FileType::Dir = m.file_type {
+                    list_meta(&m.id).await
+                } else {
+                    Ok(Vec::<FileMeta>::new())
                 }
-            } else {
-                s.send(Ok(f))
-                    .map_err(|_| anyhow::anyhow!("Walk cancelled!"))?;
+            }
+            .await;
+
+            let list = match list {
+                Err(e) => {
+                    s.send(Err(e))?;
+                    continue;
+                }
+                Ok(l) => l,
+            };
+
+            for f in list.into_iter().rev() {
+                stack.push(f);
             }
         }
 
         anyhow::Ok(())
     });
 
-    return r;
+    Ok(r)
 }

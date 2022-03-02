@@ -25,3 +25,13 @@ macro_rules! notify_ok {
             .map_err(|e| anyhow::anyhow!("Could not notify result '{}'", e))
     }};
 }
+
+#[macro_export]
+macro_rules! notify {
+    ($sink: ident, $val: expr) => {
+        match $val {
+            Ok(v) => notify_ok!($sink, v),
+            Err(e) => notify_err!($sink, e),
+        }
+    };
+}

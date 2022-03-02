@@ -1,5 +1,5 @@
-use files::{file, notify_err, notify_ok, utils};
-use futures::{self as futs, TryFutureExt};
+use files::{file, notify, notify_err, notify_ok, utils};
+use futures::{self as futs, StreamExt, TryFutureExt, TryStreamExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, manager::IdProvider, typed as pst};
 use std::{collections as cl, time};
@@ -32,7 +32,29 @@ pub async fn get_sink<T>(
     Ok((task_id, sink))
 }
 
-pub async fn cancel_sub(id: ps::SubscriptionId) -> jrpc::Result<bool> {
+pub async fn run<Fut, Fun, T>(sub: pst::Subscriber<T>, fun: Fun) -> anyhow::Result<()>
+where
+    Fut: futs::Future<Output = ()> + Send + 'static,
+    Fun: FnOnce(pst::Sink<T>) -> Fut + Send + Sync + 'static,
+    T: Send + 'static,
+{
+    let (sub_id, sink) = get_sink(sub).await?;
+
+    ACTIVE.write().await.insert(
+        sub_id.clone(),
+        task::spawn(async move {
+            fun(sink).await;
+
+            {
+                ACTIVE.write().await.remove(&sub_id);
+            }
+        }),
+    );
+
+    Ok(())
+}
+
+pub async fn sub_c(id: ps::SubscriptionId) -> jrpc::Result<bool> {
     let removed = ACTIVE.write().await.remove(&id);
     if let Some(r) = removed {
         r.abort();
@@ -136,7 +158,7 @@ pub async fn walk(
     dir: &file::FileId,
     sink: &pst::Sink<Option<file::FileMeta>>,
 ) -> anyhow::Result<()> {
-    let mut r = file::walk(dir);
+    let mut r = file::dfs(dir).await?;
 
     while let Some(res) = r.recv().await {
         match res {
@@ -150,49 +172,103 @@ pub async fn walk(
     Ok(())
 }
 
-pub async fn delete_bulk(
-    ft: &file::FileType,
-    files: &Vec<file::FileId>,
-    sink: &pst::Sink<Option<Progress>>,
-    prog_interval: u128,
-) -> anyhow::Result<()> {
-    let total = files.len() as u64;
-    let mut done = 0u64;
-    let mut processed = 0u64;
-    let mut instant = time::Instant::now();
+pub async fn delete_file_bulk(
+    sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+    files: Vec<file::FileId>,
+    prog_interval: Option<u128>,
+) {
+    let mut prog = DeleteBulkProgress {
+        total: files.len() as u64,
+        ..Default::default()
+    };
 
-    while let Some(f) = files.iter().next() {
-        let res = match ft {
-            file::FileType::Dir => file::delete_dir(f).await,
-            _ => file::delete_file(f).await,
-        };
-        match res {
-            Ok(_) => {
-                processed += 1;
-                done += 1;
+    let prog_interval = prog_interval.unwrap_or(1000);
 
-                if instant.elapsed().as_millis() < prog_interval && processed < total {
-                    continue;
-                }
+    let res = run(sub, move |sink| async move {
+        let instant = time::Instant::now();
 
-                instant = time::Instant::now();
-
-                let progress = Progress {
-                    total,
-                    done,
-                    percent: (done as f64) / (total as f64),
+        let res = futs::stream::iter(files)
+            .map(|f| async move { file::delete_file(&f).await })
+            .buffer_unordered(1000)
+            .map(|r| {
+                let r = match r {
+                    Ok(_) => {
+                        prog.deleted += 1;
+                        Ok(Some(prog.clone()))
+                    }
+                    Err(e) => {
+                        prog.errors += 1;
+                        Err(utils::to_rpc_err(e))
+                    }
                 };
 
-                notify_ok!(sink, Some(progress))
-            }
-            Err(e) => {
-                processed += 1;
-                notify_err!(sink, utils::to_rpc_err(e))
-            }
-        }?;
+                let is_done = (prog.errors + prog.deleted) == prog.total;
+                if instant.elapsed().as_millis() < prog_interval && !is_done {
+                    return Ok(());
+                }
+
+                notify!(sink, r)
+            })
+            .try_for_each(|_| async { anyhow::Ok(()) })
+            .await;
+
+        if let Err(_e) = res {
+            // TODO: log this error
+        }
+    })
+    .await;
+
+    if let Err(_e) = res {
+        // TODO: log this error
     }
+}
 
-    notify_ok!(sink, None)?;
+pub async fn delete_dir_bulk(
+    sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+    dirs: Vec<file::FileId>,
+    prog_interval: Option<u128>,
+) {
+    let mut prog = DeleteBulkProgress {
+        total: dirs.len() as u64,
+        ..Default::default()
+    };
 
-    Ok(())
+    let prog_interval = prog_interval.unwrap_or(1000);
+
+    let res = run(sub, move |sink| async move {
+        let instant = time::Instant::now();
+
+        let res = futs::stream::iter(dirs)
+            .then(|f| async move { file::delete_file(&f).await })
+            .map(|r| {
+                let r = match r {
+                    Ok(_) => {
+                        prog.deleted += 1;
+                        Ok(Some(prog.clone()))
+                    }
+                    Err(e) => {
+                        prog.errors += 1;
+                        Err(utils::to_rpc_err(e))
+                    }
+                };
+
+                let is_done = (prog.errors + prog.deleted) == prog.total;
+                if instant.elapsed().as_millis() < prog_interval && !is_done {
+                    return Ok(());
+                }
+
+                notify!(sink, r)
+            })
+            .try_for_each(|_| async { anyhow::Ok(()) })
+            .await;
+
+        if let Err(_e) = res {
+            // TODO: log this error
+        }
+    })
+    .await;
+
+    if let Err(_e) = res {
+        // TODO: log this error
+    }
 }

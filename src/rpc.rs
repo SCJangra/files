@@ -25,16 +25,17 @@ pub trait Rpc {
     #[rpc(name = "list_all")]
     fn list_all(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>>;
 
-    #[rpc(name = "create")]
-    fn create(
-        &self,
-        ft: file::FileType,
-        name: String,
-        dir: file::FileId,
-    ) -> JrpcFutResult<file::FileId>;
+    #[rpc(name = "create_file")]
+    fn create_file(&self, name: String, dir: file::FileId) -> JrpcFutResult<file::FileId>;
 
-    #[rpc(name = "delete")]
-    fn delete(&self, ft: file::FileType, id: file::FileId) -> JrpcFutResult<()>;
+    #[rpc(name = "create_dir")]
+    fn create_dir(&self, name: String, dir: file::FileId) -> JrpcFutResult<file::FileId>;
+
+    #[rpc(name = "delete_file")]
+    fn delete_file(&self, file: file::FileId) -> JrpcFutResult<()>;
+
+    #[rpc(name = "delete_dir")]
+    fn delete_dir(&self, dir: file::FileId) -> JrpcFutResult<()>;
 
     #[rpc(name = "rename")]
     fn rename(&self, file: file::FileId, new_name: String) -> JrpcFutResult<file::FileId>;
@@ -74,22 +75,49 @@ pub trait Rpc {
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 
-    #[pubsub(subscription = "delete_bulk", subscribe, name = "delete_bulk")]
-    fn delete_bulk(
+    #[pubsub(
+        subscription = "delete_file_bulk",
+        subscribe,
+        name = "delete_file_bulk"
+    )]
+    fn delete_file_bulk(
         &self,
         m: Self::Metadata,
-        sub: pst::Subscriber<Option<Progress>>,
-        ft: file::FileType,
-        ids: Vec<file::FileId>,
+        sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+        files: Vec<file::FileId>,
         prog_interval: Option<u128>,
     );
 
-    #[pubsub(subscription = "delete_bulk", unsubscribe, name = "delete_bulk_c")]
-    fn delete_bulk_c(
+    #[pubsub(
+        subscription = "delete_file_bulk",
+        unsubscribe,
+        name = "delete_file_bulk_c"
+    )]
+    fn delete_file_bulk_c(
         &self,
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
-    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
+    ) -> JrpcFutResult<bool>;
+
+    #[pubsub(subscription = "delete_dir_bulk", subscribe, name = "delete_dir_bulk")]
+    fn delete_dir_bulk(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+        dirs: Vec<file::FileId>,
+        prog_interval: Option<u128>,
+    );
+
+    #[pubsub(
+        subscription = "delete_dir_bulk",
+        unsubscribe,
+        name = "delete_dir_bulk_c"
+    )]
+    fn delete_dir_bulk_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> JrpcFutResult<bool>;
 }
 
 impl Rpc for RpcImpl {
@@ -111,48 +139,48 @@ impl Rpc for RpcImpl {
 
     fn list_all(&self, id: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
         Box::pin(async move {
-            let files = tsw::UnboundedReceiverStream::new(file::walk(&id))
-                .filter_map(|res| async move {
-                    match res {
-                        Ok(m) => Some(m),
-                        Err(_e) => None, // TODO: Log this error
-                    }
-                })
-                .collect::<Vec<file::FileMeta>>()
-                .await;
+            let files =
+                tsw::UnboundedReceiverStream::new(file::dfs(&id).await.map_err(utils::to_rpc_err)?)
+                    .filter_map(|res| async move {
+                        match res {
+                            Ok(m) => Some(m),
+                            Err(_e) => None, // TODO: Log this error
+                        }
+                    })
+                    .collect::<Vec<file::FileMeta>>()
+                    .await;
             Ok(files)
         })
     }
 
-    fn create(
-        &self,
-        ft: file::FileType,
-        name: String,
-        dir: file::FileId,
-    ) -> JrpcFutResult<file::FileId> {
+    fn create_file(&self, name: String, dir: file::FileId) -> JrpcFutResult<file::FileId> {
         Box::pin(async move {
-            use file::FileType::*;
-            let id = match ft {
-                File => file::create_file(&name, &dir).await,
-                Dir => file::create_dir(&name, &dir).await,
-                Unknown => {
-                    let err = anyhow::anyhow!("Unsupported operation!");
-                    return Err(utils::to_rpc_err(err));
-                }
-            }
-            .map_err(utils::to_rpc_err)?;
+            let id = file::create_file(&name, &dir)
+                .await
+                .map_err(utils::to_rpc_err)?;
             Ok(id)
         })
     }
 
-    fn delete(&self, ft: file::FileType, id: file::FileId) -> JrpcFutResult<()> {
+    fn create_dir(&self, name: String, dir: file::FileId) -> JrpcFutResult<file::FileId> {
         Box::pin(async move {
-            use file::FileType::*;
-            match ft {
-                Dir => file::delete_dir(&id).await,
-                _ => file::delete_file(&id).await,
-            }
-            .map_err(utils::to_rpc_err)?;
+            let id = file::create_dir(&name, &dir)
+                .await
+                .map_err(utils::to_rpc_err)?;
+            Ok(id)
+        })
+    }
+
+    fn delete_file(&self, file: file::FileId) -> JrpcFutResult<()> {
+        Box::pin(async move {
+            file::delete_file(&file).await.map_err(utils::to_rpc_err)?;
+            Ok(())
+        })
+    }
+
+    fn delete_dir(&self, dir: file::FileId) -> JrpcFutResult<()> {
+        Box::pin(async move {
+            file::delete_dir(&dir).await.map_err(utils::to_rpc_err)?;
             Ok(())
         })
     }
@@ -214,7 +242,7 @@ impl Rpc for RpcImpl {
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> JrpcFutResult<bool> {
-        Box::pin(cancel_sub(id))
+        Box::pin(sub_c(id))
     }
 
     fn walk(
@@ -252,47 +280,42 @@ impl Rpc for RpcImpl {
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
-        Box::pin(cancel_sub(id))
+        Box::pin(sub_c(id))
     }
 
-    fn delete_bulk(
+    fn delete_file_bulk(
         &self,
         _m: Self::Metadata,
-        sub: pst::Subscriber<Option<Progress>>,
-        ft: file::FileType,
-        ids: Vec<file::FileId>,
+        sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+        files: Vec<file::FileId>,
         prog_interval: Option<u128>,
     ) {
-        task::spawn(async move {
-            let (task_id, sink) = get_sink(sub)
-                .inspect_err(|_e| { /* TODO: Log this error */ })
-                .await?;
-
-            ACTIVE.write().await.insert(
-                task_id.clone(),
-                task::spawn(async move {
-                    let prog_interval = prog_interval.unwrap_or(1000);
-                    let res = delete_bulk(&ft, &ids, &sink, prog_interval).await;
-
-                    if let Err(_e) = res {
-                        // TODO: Log this error
-                    }
-
-                    {
-                        ACTIVE.write().await.remove(&task_id);
-                    }
-                }),
-            );
-
-            anyhow::Ok(())
-        });
+        task::spawn(delete_file_bulk(sub, files, prog_interval));
     }
 
-    fn delete_bulk_c(
+    fn delete_file_bulk_c(
         &self,
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
-    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
-        Box::pin(cancel_sub(id))
+    ) -> JrpcFutResult<bool> {
+        Box::pin(sub_c(id))
+    }
+
+    fn delete_dir_bulk(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+        dirs: Vec<file::FileId>,
+        prog_interval: Option<u128>,
+    ) {
+        task::spawn(delete_dir_bulk(sub, dirs, prog_interval));
+    }
+
+    fn delete_dir_bulk_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> JrpcFutResult<bool> {
+        Box::pin(sub_c(id))
     }
 }
