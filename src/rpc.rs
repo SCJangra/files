@@ -40,8 +40,8 @@ pub trait Rpc {
     #[rpc(name = "rename")]
     fn rename(&self, file: file::FileId, new_name: String) -> JrpcFutResult<file::FileId>;
 
-    #[rpc(name = "move_file")]
-    fn move_file(&self, file: file::FileId, dir: file::FileId) -> JrpcFutResult<file::FileId>;
+    #[rpc(name = "move")]
+    fn mv(&self, file: file::FileId, dir: file::FileId) -> JrpcFutResult<file::FileId>;
 
     #[pubsub(subscription = "copy_file", subscribe, name = "copy_file")]
     fn copy_file(
@@ -194,7 +194,7 @@ impl Rpc for RpcImpl {
         })
     }
 
-    fn move_file(&self, file: file::FileId, dir: file::FileId) -> JrpcFutResult<file::FileId> {
+    fn mv(&self, file: file::FileId, dir: file::FileId) -> JrpcFutResult<file::FileId> {
         Box::pin(async move {
             let id = file::move_file(&file, &dir)
                 .await
