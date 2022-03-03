@@ -1,4 +1,7 @@
-use files::{file, notify, notify_err, notify_ok, utils};
+use files::{
+    file::{self, FileMeta},
+    notify, notify_err, notify_ok, utils,
+};
 use futures::{self as futs, StreamExt, TryFutureExt, TryStreamExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, manager::IdProvider, typed as pst};
@@ -7,6 +10,7 @@ use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt},
     sync, task,
 };
+use tokio_stream::wrappers as tsw;
 
 use super::types::*;
 
@@ -32,13 +36,19 @@ pub async fn get_sink<T>(
     Ok((task_id, sink))
 }
 
-pub async fn run<Fut, Fun, T>(sub: pst::Subscriber<T>, fun: Fun) -> anyhow::Result<()>
+pub async fn run<Fut, Fun, T>(sub: pst::Subscriber<T>, fun: Fun)
 where
     Fut: futs::Future<Output = ()> + Send + 'static,
     Fun: FnOnce(pst::Sink<T>) -> Fut + Send + Sync + 'static,
     T: Send + 'static,
 {
-    let (sub_id, sink) = get_sink(sub).await?;
+    let (sub_id, sink) = match get_sink(sub).await {
+        Err(_e) => {
+            /* TODO: Log this error */
+            return;
+        }
+        Ok(v) => v,
+    };
 
     ACTIVE.write().await.insert(
         sub_id.clone(),
@@ -50,8 +60,6 @@ where
             }
         }),
     );
-
-    Ok(())
 }
 
 pub async fn sub_c(id: ps::SubscriptionId) -> jrpc::Result<bool> {
@@ -154,29 +162,25 @@ pub async fn copy_file(
     Ok(())
 }
 
-pub async fn walk(
-    dir: &file::FileId,
-    sink: &pst::Sink<Option<file::FileMeta>>,
-) -> anyhow::Result<()> {
-    let mut r = file::dfs(dir).await?;
+pub async fn dfs(sink: pst::Sink<Option<FileMeta>>, id: file::FileId) -> anyhow::Result<()> {
+    let r = file::dfs(&id).await?;
 
-    while let Some(res) = r.recv().await {
-        match res {
-            Ok(m) => notify_ok!(sink, Some(m))?,
-            Err(e) => notify_err!(sink, utils::to_rpc_err(e))?,
-        };
-    }
+    tsw::UnboundedReceiverStream::new(r)
+        .map(|res| match res {
+            Ok(m) => notify_ok!(sink, Some(m)),
+            Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
+        })
+        .try_for_each(|_| async { anyhow::Ok(()) })
+        .await?;
 
-    notify_ok!(sink, None)?;
-
-    Ok(())
+    anyhow::Ok(())
 }
 
 pub async fn delete_file_bulk(
-    sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+    sink: pst::Sink<Option<DeleteBulkProgress>>,
     files: Vec<file::FileId>,
     prog_interval: Option<u128>,
-) {
+) -> anyhow::Result<()> {
     let mut prog = DeleteBulkProgress {
         total: files.len() as u64,
         ..Default::default()
@@ -184,50 +188,42 @@ pub async fn delete_file_bulk(
 
     let prog_interval = prog_interval.unwrap_or(1000);
 
-    let res = run(sub, move |sink| async move {
-        let instant = time::Instant::now();
+    let instant = time::Instant::now();
 
-        let res = futs::stream::iter(files)
-            .map(|f| async move { file::delete_file(&f).await })
-            .buffer_unordered(1000)
-            .map(|r| {
-                let r = match r {
-                    Ok(_) => {
-                        prog.deleted += 1;
-                        Ok(Some(prog.clone()))
-                    }
-                    Err(e) => {
-                        prog.errors += 1;
-                        Err(utils::to_rpc_err(e))
-                    }
-                };
-
-                let is_done = (prog.errors + prog.deleted) == prog.total;
-                if instant.elapsed().as_millis() < prog_interval && !is_done {
-                    return Ok(());
+    futs::stream::iter(files)
+        .map(|f| async move { file::delete_file(&f).await })
+        .buffer_unordered(1000)
+        .map(|r| {
+            let r = match r {
+                Ok(_) => {
+                    prog.deleted += 1;
+                    Ok(Some(prog.clone()))
                 }
+                Err(e) => {
+                    prog.errors += 1;
+                    Err(utils::to_rpc_err(e))
+                }
+            };
 
-                notify!(sink, r)
-            })
-            .try_for_each(|_| async { anyhow::Ok(()) })
-            .await;
+            let is_done = (prog.errors + prog.deleted) == prog.total;
+            if instant.elapsed().as_millis() < prog_interval && !is_done {
+                return Ok(());
+            }
 
-        if let Err(_e) = res {
-            // TODO: log this error
-        }
-    })
-    .await;
+            notify!(sink, r)
+        })
+        .try_for_each(|_| async { anyhow::Ok(()) })
+        .await
+        .and_then(|_| notify_ok!(sink, None))?;
 
-    if let Err(_e) = res {
-        // TODO: log this error
-    }
+    anyhow::Ok(())
 }
 
 pub async fn delete_dir_bulk(
-    sub: pst::Subscriber<Option<DeleteBulkProgress>>,
+    sink: pst::Sink<Option<DeleteBulkProgress>>,
     dirs: Vec<file::FileId>,
     prog_interval: Option<u128>,
-) {
+) -> anyhow::Result<()> {
     let mut prog = DeleteBulkProgress {
         total: dirs.len() as u64,
         ..Default::default()
@@ -235,40 +231,32 @@ pub async fn delete_dir_bulk(
 
     let prog_interval = prog_interval.unwrap_or(1000);
 
-    let res = run(sub, move |sink| async move {
-        let instant = time::Instant::now();
+    let instant = time::Instant::now();
 
-        let res = futs::stream::iter(dirs)
-            .then(|f| async move { file::delete_file(&f).await })
-            .map(|r| {
-                let r = match r {
-                    Ok(_) => {
-                        prog.deleted += 1;
-                        Ok(Some(prog.clone()))
-                    }
-                    Err(e) => {
-                        prog.errors += 1;
-                        Err(utils::to_rpc_err(e))
-                    }
-                };
-
-                let is_done = (prog.errors + prog.deleted) == prog.total;
-                if instant.elapsed().as_millis() < prog_interval && !is_done {
-                    return Ok(());
+    futs::stream::iter(dirs)
+        .then(|f| async move { file::delete_dir(&f).await })
+        .map(|r| {
+            let r = match r {
+                Ok(_) => {
+                    prog.deleted += 1;
+                    Ok(Some(prog.clone()))
                 }
+                Err(e) => {
+                    prog.errors += 1;
+                    Err(utils::to_rpc_err(e))
+                }
+            };
 
-                notify!(sink, r)
-            })
-            .try_for_each(|_| async { anyhow::Ok(()) })
-            .await;
+            let is_done = (prog.errors + prog.deleted) == prog.total;
+            if instant.elapsed().as_millis() < prog_interval && !is_done {
+                return Ok(());
+            }
 
-        if let Err(_e) = res {
-            // TODO: log this error
-        }
-    })
-    .await;
+            notify!(sink, r)
+        })
+        .try_for_each(|_| async { anyhow::Ok(()) })
+        .await
+        .and_then(|_| notify_ok!(sink, None))?;
 
-    if let Err(_e) = res {
-        // TODO: log this error
-    }
+    anyhow::Ok(())
 }

@@ -61,15 +61,15 @@ pub trait Rpc {
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 
     #[pubsub(subscription = "walk", subscribe, name = "walk")]
-    fn walk(
+    fn dfs(
         &self,
         m: Self::Metadata,
         sub: pst::Subscriber<Option<file::FileMeta>>,
-        dir: file::FileId,
+        id: file::FileId,
     );
 
     #[pubsub(subscription = "walk", unsubscribe, name = "walk_c")]
-    fn walk_c(
+    fn dfs_c(
         &self,
         m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
@@ -245,37 +245,22 @@ impl Rpc for RpcImpl {
         Box::pin(sub_c(id))
     }
 
-    fn walk(
+    fn dfs(
         &self,
         _m: Self::Metadata,
         sub: pst::Subscriber<Option<file::FileMeta>>,
-        dir: file::FileId,
+        id: file::FileId,
     ) {
-        task::spawn(async move {
-            let (task_id, sink) = get_sink(sub)
-                .inspect_err(|_e| { /* TODO: Log this error */ })
-                .await?;
+        task::spawn(run(sub, move |sink| async move {
+            let res = dfs(sink, id).await;
 
-            ACTIVE.write().await.insert(
-                task_id.clone(),
-                task::spawn(async move {
-                    let res = walk(&dir, &sink).await;
-
-                    if let Err(_e) = res {
-                        // TODO: Log this error
-                    }
-
-                    {
-                        ACTIVE.write().await.remove(&task_id);
-                    }
-                }),
-            );
-
-            anyhow::Ok(())
-        });
+            if let Err(_e) = res {
+                // TODO: log this error
+            }
+        }));
     }
 
-    fn walk_c(
+    fn dfs_c(
         &self,
         _m: Option<Self::Metadata>,
         id: ps::SubscriptionId,
@@ -290,7 +275,13 @@ impl Rpc for RpcImpl {
         files: Vec<file::FileId>,
         prog_interval: Option<u128>,
     ) {
-        task::spawn(delete_file_bulk(sub, files, prog_interval));
+        task::spawn(run(sub, move |sink| async move {
+            let res = delete_file_bulk(sink, files, prog_interval).await;
+
+            if let Err(_e) = res {
+                // TODO: log this error
+            }
+        }));
     }
 
     fn delete_file_bulk_c(
@@ -308,7 +299,13 @@ impl Rpc for RpcImpl {
         dirs: Vec<file::FileId>,
         prog_interval: Option<u128>,
     ) {
-        task::spawn(delete_dir_bulk(sub, dirs, prog_interval));
+        task::spawn(run(sub, move |sink| async move {
+            let res = delete_dir_bulk(sink, dirs, prog_interval).await;
+
+            if let Err(_e) = res {
+                // TODO: log this error
+            }
+        }));
     }
 
     fn delete_dir_bulk_c(
