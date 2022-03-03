@@ -23,3 +23,10 @@ pub struct FileId(pub FileSource, pub String);
 pub enum FileSource {
     Local,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Progress {
+    pub total: u64,
+    pub done: u64,
+    pub percent: f64,
+}

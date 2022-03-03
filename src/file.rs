@@ -1,7 +1,8 @@
-use futures as futs;
+use anyhow::Context;
+use futures::{self as futs, TryFutureExt};
 use std::path;
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::mpsc::{unbounded_channel, UnboundedReceiver},
     task,
 };
@@ -54,14 +55,61 @@ pub async fn create_dir(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
 }
 
 pub async fn copy_file(
-    source: &FileId,
-    dest: &FileId,
-) -> anyhow::Result<(impl AsyncRead, impl AsyncWrite)> {
-    let fm = get_meta(source).await?;
-    let dest = create_file(&fm.name, dest).await?;
+    src: &FileId,
+    dst_dir: &FileId,
+) -> anyhow::Result<UnboundedReceiver<anyhow::Result<Progress>>> {
+    let (s, r) = unbounded_channel();
 
-    let rw = futs::try_join!(read(source), write(&dest, true))?;
-    Ok(rw)
+    let sm = get_meta(src).await?;
+    let dm = create_file(&sm.name, dst_dir)
+        .and_then(|id| async move { get_meta(&id).await })
+        .await?;
+
+    let (rd, wr) = futs::try_join!(read(src), write(dst_dir, true))?;
+
+    let mut reader = io::BufReader::new(rd);
+    let mut writer = io::BufWriter::new(wr);
+    let mut prog = Progress {
+        total: sm.size,
+        ..Default::default()
+    };
+    let mut buf = [0; 10_000_000];
+
+    task::spawn(async move {
+        loop {
+            let res = async {
+                let bytes = reader
+                    .read(&mut buf)
+                    .await
+                    .with_context(|| format!("Error while reading file {}", sm.name))?;
+
+                writer
+                    .write_all(&buf[..bytes])
+                    .await
+                    .with_context(|| format!("Error while writing to file {}", dm.name))?;
+
+                prog.done += bytes as u64;
+                prog.percent = (prog.done as f64) / (prog.total as f64);
+                anyhow::Ok(bytes)
+            }
+            .await;
+
+            match res {
+                Err(e) => {
+                    s.send(Err(e))?;
+                    break;
+                }
+                Ok(b) if b == 0 => {
+                    s.send(Ok(prog.clone()))?;
+                    break;
+                }
+                Ok(_) => s.send(Ok(prog.clone()))?,
+            };
+        }
+        anyhow::Ok(())
+    });
+
+    Ok(r)
 }
 
 pub async fn rename(id: &FileId, new_name: &str) -> anyhow::Result<FileId> {

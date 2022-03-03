@@ -2,14 +2,11 @@ use files::{
     file::{self, FileMeta},
     notify, notify_err, notify_ok, utils,
 };
-use futures::{self as futs, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{self as futs, StreamExt, TryStreamExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, manager::IdProvider, typed as pst};
 use std::{collections as cl, time};
-use tokio::{
-    io::{self, AsyncBufReadExt, AsyncWriteExt},
-    sync, task,
-};
+use tokio::{sync, task};
 use tokio_stream::wrappers as tsw;
 
 use super::types::*;
@@ -77,87 +74,36 @@ pub async fn sub_c(id: ps::SubscriptionId) -> jrpc::Result<bool> {
 }
 
 pub async fn copy_file(
-    source: &file::FileId,
-    dest: &file::FileId,
-    sink: &pst::Sink<Option<Progress>>,
-    prog_interval: u128,
+    sink: pst::Sink<Option<file::Progress>>,
+    file: file::FileId,
+    dst_dir: file::FileId,
+    prog_interval: Option<u128>,
 ) -> anyhow::Result<()> {
-    let res = futs::try_join!(file::get_meta(source), file::get_meta(dest));
-    let (sm, dm) = match res {
+    let r = match file::copy_file(&file, &dst_dir).await {
         Err(e) => {
             notify_err!(sink, utils::to_rpc_err(e))?;
             return Ok(());
         }
-        Ok(m) => m,
-    };
-    let (r, w) = match file::copy_file(source, dest).await {
-        Err(e) => {
-            notify_err!(sink, utils::to_rpc_err(e))?;
-            return Ok(());
-        }
-        Ok(rw) => rw,
+        Ok(r) => r,
     };
 
-    let mut reader = io::BufReader::new(r);
-    let mut writer = io::BufWriter::new(w);
-    let mut done = 0u64;
-    let total = sm.size;
-    let mut instant = time::Instant::now();
+    let prog_interval = prog_interval.unwrap_or(1000);
+    let instant = time::Instant::now();
 
-    loop {
-        let res: anyhow::Result<u64> = reader
-            .fill_buf()
-            .map_err(|e| {
-                anyhow::Error::new(e).context(format!("Error while reading file '{}'", sm.name))
-            })
-            .and_then(|buf| {
-                writer
-                    .write_all(buf)
-                    .map_err(|e| {
-                        anyhow::Error::new(e)
-                            .context(format!("Error while writing to file '{}'", dm.name))
-                    })
-                    .map_ok(|_| buf.len() as u64)
-            })
-            .await;
-
-        if let Err(e) = writer.flush().await {
-            let e = anyhow::Error::new(e)
-                .context(format!("Error while writing file to disk '{}'", dm.name));
-            notify_err!(sink, utils::to_rpc_err(e))?;
-            break;
-        }
-
-        let len = match res {
-            Err(e) => {
-                notify_err!(sink, utils::to_rpc_err(e))?;
-                break;
+    tsw::UnboundedReceiverStream::new(r)
+        .map(|res| match res {
+            Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
+            Ok(p) => {
+                let is_done = p.total <= p.done;
+                if instant.elapsed().as_millis() < prog_interval && !is_done {
+                    return Ok(());
+                }
+                notify_ok!(sink, Some(p))
             }
-            Ok(l) if l == 0 => {
-                notify_ok!(sink, None)?;
-                break;
-            }
-            Ok(l) => l,
-        };
-
-        reader.consume(len as usize);
-
-        done += len;
-
-        if instant.elapsed().as_millis() < prog_interval && done != total {
-            continue;
-        }
-
-        instant = time::Instant::now();
-
-        let progress = Progress {
-            total,
-            done,
-            percent: (done as f64) / (total as f64),
-        };
-
-        notify_ok!(sink, Some(progress))?;
-    }
+        })
+        .try_for_each(|_| async { Ok(()) })
+        .await
+        .and_then(|_| notify_ok!(sink, None))?;
 
     Ok(())
 }

@@ -10,10 +10,9 @@ use tokio_stream::wrappers as tsw;
 
 pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     let id = path.to_string_lossy().to_string();
-    let parent_id = match path.parent() {
-        Some(p) => Some(FileId(FileSource::Local, p.to_string_lossy().to_string())),
-        None => None,
-    };
+    let parent_id = path
+        .parent()
+        .map(|p| FileId(FileSource::Local, p.to_string_lossy().to_string()));
 
     let name = match path.file_name() {
         Some(n) => n.to_string_lossy().to_string(),
@@ -65,12 +64,9 @@ pub async fn list_meta(path: &path::Path) -> anyhow::Result<Vec<FileMeta>> {
 }
 
 pub async fn read(path: &path::Path) -> anyhow::Result<impl AsyncRead> {
-    let file = fs::File::open(path).await.with_context(|| {
-        format!(
-            "Could not read file '{}'",
-            path.to_string_lossy().to_string()
-        )
-    })?;
+    let file = fs::File::open(path)
+        .await
+        .with_context(|| format!("Could not read file '{}'", path.to_string_lossy()))?;
 
     Ok(file)
 }
@@ -91,12 +87,8 @@ pub async fn write(path: &path::Path, overwrite: bool) -> anyhow::Result<impl As
             .await
     };
 
-    let file = file.with_context(|| {
-        format!(
-            "Could not write to file '{}'",
-            path.to_string_lossy().to_string()
-        )
-    })?;
+    let file =
+        file.with_context(|| format!("Could not write to file '{}'", path.to_string_lossy()))?;
 
     Ok(file)
 }
@@ -131,12 +123,9 @@ pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<FileId>
     let mut path = path::PathBuf::from(file);
     path.set_file_name(new_name);
 
-    fs::rename(file, path.as_path()).await.with_context(|| {
-        format!(
-            "Could not rename file '{}'",
-            file.to_string_lossy().to_string()
-        )
-    })?;
+    fs::rename(file, path.as_path())
+        .await
+        .with_context(|| format!("Could not rename file '{}'", file.to_string_lossy()))?;
 
     let id = FileId(FileSource::Local, path.to_string_lossy().to_string());
 
@@ -160,7 +149,7 @@ pub async fn move_file(file: &path::Path, dir: &path::Path) -> anyhow::Result<Fi
     fs::rename(file, dir_pb.as_path()).await.with_context(|| {
         format!(
             "Could not move file '{}' to '{}'",
-            file.to_string_lossy().to_string(),
+            file.to_string_lossy(),
             p.clone(),
         )
     })?;
@@ -170,21 +159,15 @@ pub async fn move_file(file: &path::Path, dir: &path::Path) -> anyhow::Result<Fi
 }
 
 pub async fn delete_file(file: &path::Path) -> anyhow::Result<()> {
-    fs::remove_file(file).await.with_context(|| {
-        format!(
-            "Could not delete file '{}'",
-            file.to_string_lossy().to_string()
-        )
-    })?;
+    fs::remove_file(file)
+        .await
+        .with_context(|| format!("Could not delete file '{}'", file.to_string_lossy()))?;
     Ok(())
 }
 
 pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<()> {
-    fs::remove_dir(dir).await.with_context(|| {
-        format!(
-            "Could not delete directory '{}'",
-            dir.to_string_lossy().to_string()
-        )
-    })?;
+    fs::remove_dir(dir)
+        .await
+        .with_context(|| format!("Could not delete directory '{}'", dir.to_string_lossy()))?;
     Ok(())
 }

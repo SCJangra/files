@@ -3,7 +3,7 @@ mod types;
 
 use files::{file, utils};
 use fun::*;
-use futures::{StreamExt, TryFutureExt};
+use futures::StreamExt;
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
 use tokio::task;
@@ -47,9 +47,9 @@ pub trait Rpc {
     fn copy_file(
         &self,
         m: Self::Metadata,
-        sub: pst::Subscriber<Option<Progress>>,
-        source: file::FileId,
-        dest: file::FileId,
+        sub: pst::Subscriber<Option<file::Progress>>,
+        file: file::FileId,
+        dst_dir: file::FileId,
         prog_interval: Option<u128>,
     );
 
@@ -206,35 +206,18 @@ impl Rpc for RpcImpl {
     fn copy_file(
         &self,
         _m: Self::Metadata,
-        sub: pst::Subscriber<Option<Progress>>,
-        source: file::FileId,
-        dest: file::FileId,
+        sub: pst::Subscriber<Option<file::Progress>>,
+        file: file::FileId,
+        dst_dir: file::FileId,
         prog_interval: Option<u128>,
     ) {
-        task::spawn(async move {
-            let (task_id, sink) = get_sink(sub)
-                .inspect_err(|_e| { /* TODO: Log this error */ })
-                .await?;
+        task::spawn(run(sub, move |sink| async move {
+            let res = copy_file(sink, file, dst_dir, prog_interval).await;
 
-            ACTIVE.write().await.insert(
-                task_id.clone(),
-                task::spawn(async move {
-                    let prog_interval = prog_interval.unwrap_or(1000);
-
-                    let res = copy_file(&source, &dest, &sink, prog_interval).await;
-
-                    if let Err(_e) = res {
-                        // TODO: Log this error
-                    }
-
-                    {
-                        ACTIVE.write().await.remove(&task_id);
-                    }
-                }),
-            );
-
-            anyhow::Ok(())
-        });
+            if let Err(_e) = res {
+                // TODO: log this error
+            }
+        }));
     }
 
     fn copy_file_c(
