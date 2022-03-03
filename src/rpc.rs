@@ -60,7 +60,7 @@ pub trait Rpc {
         id: ps::SubscriptionId,
     ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 
-    #[pubsub(subscription = "walk", subscribe, name = "walk")]
+    #[pubsub(subscription = "dfs", subscribe, name = "dfs")]
     fn dfs(
         &self,
         m: Self::Metadata,
@@ -68,7 +68,7 @@ pub trait Rpc {
         id: file::FileId,
     );
 
-    #[pubsub(subscription = "walk", unsubscribe, name = "walk_c")]
+    #[pubsub(subscription = "dfs", unsubscribe, name = "dfs_c")]
     fn dfs_c(
         &self,
         m: Option<Self::Metadata>,
