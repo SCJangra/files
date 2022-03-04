@@ -1,5 +1,5 @@
 use anyhow::Context;
-use futures::{self as futs, TryFutureExt};
+use futures::{self as futs, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use std::path;
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -18,7 +18,9 @@ pub async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
     }
 }
 
-pub async fn list_meta(id: &FileId) -> anyhow::Result<Vec<FileMeta>> {
+pub async fn list_meta(
+    id: &FileId,
+) -> anyhow::Result<impl Stream<Item = anyhow::Result<FileMeta>>> {
     let FileId(source, id) = id;
 
     match source {
@@ -149,26 +151,32 @@ pub async fn dfs(id: &FileId) -> anyhow::Result<UnboundedReceiver<anyhow::Result
         let mut stack = vec![m];
 
         while let Some(m) = stack.pop() {
-            let list = async {
-                if let FileType::Dir = m.file_type {
-                    list_meta(&m.id).await
-                } else {
-                    Ok(Vec::<FileMeta>::new())
-                }
+            if !matches!(m.file_type, FileType::Dir) {
+                s.send(Ok(m))?;
+                continue;
             }
-            .await;
 
-            let list = match list {
+            let list = match list_meta(&m.id).await {
                 Err(e) => {
+                    s.send(Ok(m))?;
                     s.send(Err(e))?;
                     continue;
                 }
-                Ok(l) => l,
+                Ok(l) => {
+                    s.send(Ok(m))?;
+                    l
+                }
             };
 
-            for f in list.into_iter().rev() {
-                stack.push(f);
-            }
+            list.map(|r| match r {
+                Err(e) => s.send(Err(e)),
+                Ok(m) => {
+                    stack.push(m);
+                    Ok(())
+                }
+            })
+            .try_for_each(|_| async { Ok(()) })
+            .await?;
         }
 
         anyhow::Ok(())

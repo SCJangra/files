@@ -117,7 +117,8 @@ pub async fn dfs(sink: pst::Sink<Option<FileMeta>>, id: file::FileId) -> anyhow:
             Err(e) => notify_err!(sink, utils::to_rpc_err(e)),
         })
         .try_for_each(|_| async { anyhow::Ok(()) })
-        .await?;
+        .await
+        .and_then(|_| notify_ok!(sink, None))?;
 
     anyhow::Ok(())
 }

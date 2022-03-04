@@ -1,6 +1,6 @@
 use super::{FileId, FileMeta, FileSource, FileType};
 use anyhow::Context;
-use futures::TryStreamExt;
+use futures::{Stream, TryStreamExt};
 use std::path;
 use tokio::{
     fs,
@@ -44,23 +44,21 @@ pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     })
 }
 
-pub async fn list_meta(path: &path::Path) -> anyhow::Result<Vec<FileMeta>> {
+pub async fn list_meta(
+    path: &path::Path,
+) -> anyhow::Result<impl Stream<Item = anyhow::Result<FileMeta>>> {
     let id = path.to_string_lossy().to_string();
     let rd = fs::read_dir(path)
         .await
         .with_context(|| format!("Could not read directory '{}'", id))?;
 
-    let s = tsw::ReadDirStream::new(rd);
-
-    let files = s
-        .map_err(|e| {
+    let s = tsw::ReadDirStream::new(rd)
+        .map_err(move |e| {
             anyhow::Error::new(e).context(format!("Error while reading directory '{}'", id))
         })
-        .and_then(|d| async move { get_meta(d.path().as_path()).await })
-        .try_collect::<Vec<FileMeta>>()
-        .await?;
+        .and_then(|d| async move { get_meta(d.path().as_path()).await });
 
-    Ok(files)
+    Ok(s)
 }
 
 pub async fn read(path: &path::Path) -> anyhow::Result<impl AsyncRead> {

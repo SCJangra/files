@@ -3,7 +3,7 @@ mod types;
 
 use files::{file, utils};
 use fun::*;
-use futures::StreamExt;
+use futures::{StreamExt, TryFutureExt, TryStreamExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
 use tokio::task;
@@ -132,7 +132,12 @@ impl Rpc for RpcImpl {
 
     fn list(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
         Box::pin(async move {
-            let f = file::list_meta(&dir).await.map_err(utils::to_rpc_err)?;
+            let f = file::list_meta(&dir)
+                .map_err(utils::to_rpc_err)
+                .await?
+                .try_collect::<Vec<file::FileMeta>>()
+                .await
+                .map_err(utils::to_rpc_err)?;
             Ok(f)
         })
     }
