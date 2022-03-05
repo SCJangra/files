@@ -1,6 +1,7 @@
 mod fun;
 mod types;
 
+use anyhow::Context;
 use files::{file, utils};
 use fun::*;
 use futures::{StreamExt, TryFutureExt, TryStreamExt};
@@ -132,12 +133,30 @@ impl Rpc for RpcImpl {
 
     fn list(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
         Box::pin(async move {
-            let f = file::list_meta(&dir)
+            let mut files = Vec::new();
+            let mut dirs = Vec::new();
+
+            file::list_meta(&dir)
                 .map_err(utils::to_rpc_err)
                 .await?
-                .try_collect::<Vec<file::FileMeta>>()
-                .await
-                .map_err(utils::to_rpc_err)?;
+                .map_err(utils::to_rpc_err)
+                .map_ok(|m| match m.file_type {
+                    file::FileType::Dir => dirs.push(m),
+                    _ => files.push(m),
+                })
+                .try_for_each(|_| async { Ok(()) })
+                .await?;
+
+            let f = task::spawn_blocking(move || {
+                files.sort_by(|a, b| a.name.cmp(&b.name));
+                dirs.sort_by(|a, b| a.name.cmp(&b.name));
+                dirs.extend(files);
+                dirs
+            })
+            .await
+            .with_context(|| "Unexpected error!".to_string())
+            .map_err(utils::to_rpc_err)?;
+
             Ok(f)
         })
     }
