@@ -88,7 +88,7 @@ pub async fn copy_file(
     };
 
     let prog_interval = prog_interval.unwrap_or(1000);
-    let instant = time::Instant::now();
+    let mut instant = time::Instant::now();
 
     tsw::UnboundedReceiverStream::new(r)
         .map(|res| match res {
@@ -98,6 +98,7 @@ pub async fn copy_file(
                 if instant.elapsed().as_millis() < prog_interval && !is_done {
                     return Ok(());
                 }
+                instant = time::Instant::now();
                 notify_ok!(sink, Some(p))
             }
         })
