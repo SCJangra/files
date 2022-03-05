@@ -67,7 +67,7 @@ pub async fn copy_file(
         .and_then(|id| async move { get_meta(&id).await })
         .await?;
 
-    let (rd, wr) = futs::try_join!(read(src), write(dst_dir, true))?;
+    let (rd, wr) = futs::try_join!(read(src), write(&dm.id, true))?;
 
     let mut reader = io::BufReader::new(rd);
     let mut writer = io::BufWriter::new(wr);
