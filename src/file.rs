@@ -75,7 +75,7 @@ pub async fn copy_file(
         total: sm.size,
         ..Default::default()
     };
-    let mut buf = [0; 10_000_000];
+    let mut buf = vec![0; 10_000_000];
 
     task::spawn(async move {
         loop {
