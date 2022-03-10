@@ -1,3 +1,4 @@
+use anyhow::Context;
 use files::{
     file::{self, FileMeta},
     notify, notify_err, notify_ok, utils,
@@ -71,6 +72,49 @@ pub async fn sub_c(id: ps::SubscriptionId) -> jrpc::Result<bool> {
             data: None,
         })
     }
+}
+
+pub async fn list(dir: file::FileId) -> anyhow::Result<Vec<FileMeta>> {
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+
+    file::list_meta(&dir)
+        .await?
+        .map_ok(|m| match m.file_type {
+            file::FileType::Dir => dirs.push(m),
+            _ => files.push(m),
+        })
+        .try_for_each(|_| async { Ok(()) })
+        .await?;
+
+    let f = task::spawn_blocking(move || {
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+        dirs.sort_by(|a, b| a.name.cmp(&b.name));
+        dirs.extend(files);
+        dirs
+    })
+    .await
+    .with_context(|| "Unexpected error!".to_string())?;
+
+    Ok(f)
+}
+
+pub async fn stream(sink: pst::Sink<Option<FileMeta>>, dir: file::FileId) -> anyhow::Result<()> {
+    let list = match list(dir).await {
+        Err(e) => {
+            notify_err!(sink, utils::to_rpc_err(e))?;
+            return Ok(());
+        }
+        Ok(l) => l,
+    };
+
+    for f in list.into_iter() {
+        notify_ok!(sink, Some(f))?;
+    }
+
+    notify_ok!(sink, None)?;
+
+    Ok(())
 }
 
 pub async fn copy_file(

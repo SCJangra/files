@@ -1,10 +1,9 @@
 mod fun;
 mod types;
 
-use anyhow::Context;
 use files::{file, utils};
 use fun::*;
-use futures::{StreamExt, TryFutureExt, TryStreamExt};
+use futures::{StreamExt, TryFutureExt};
 use jsonrpc_core as jrpc;
 use jsonrpc_pubsub::{self as ps, typed as pst};
 use tokio::task;
@@ -22,6 +21,21 @@ pub trait Rpc {
 
     #[rpc(name = "list")]
     fn list(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>>;
+
+    #[pubsub(subscription = "stream", subscribe, name = "stream")]
+    fn stream(
+        &self,
+        m: Self::Metadata,
+        sub: pst::Subscriber<Option<file::FileMeta>>,
+        dir: file::FileId,
+    );
+
+    #[pubsub(subscription = "stream", unsubscribe, name = "stream_c")]
+    fn stream_c(
+        &self,
+        m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>>;
 
     #[rpc(name = "list_all")]
     fn list_all(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>>;
@@ -132,33 +146,30 @@ impl Rpc for RpcImpl {
     }
 
     fn list(&self, dir: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
-        Box::pin(async move {
-            let mut files = Vec::new();
-            let mut dirs = Vec::new();
+        Box::pin(list(dir).map_err(utils::to_rpc_err))
+    }
 
-            file::list_meta(&dir)
-                .map_err(utils::to_rpc_err)
-                .await?
-                .map_err(utils::to_rpc_err)
-                .map_ok(|m| match m.file_type {
-                    file::FileType::Dir => dirs.push(m),
-                    _ => files.push(m),
-                })
-                .try_for_each(|_| async { Ok(()) })
-                .await?;
+    fn stream(
+        &self,
+        _m: Self::Metadata,
+        sub: pst::Subscriber<Option<file::FileMeta>>,
+        dir: file::FileId,
+    ) {
+        task::spawn(run(sub, move |sink| async move {
+            let res = stream(sink, dir).await;
 
-            let f = task::spawn_blocking(move || {
-                files.sort_by(|a, b| a.name.cmp(&b.name));
-                dirs.sort_by(|a, b| a.name.cmp(&b.name));
-                dirs.extend(files);
-                dirs
-            })
-            .await
-            .with_context(|| "Unexpected error!".to_string())
-            .map_err(utils::to_rpc_err)?;
+            if let Err(_e) = res {
+                // TODO: log this error
+            }
+        }));
+    }
 
-            Ok(f)
-        })
+    fn stream_c(
+        &self,
+        _m: Option<Self::Metadata>,
+        id: ps::SubscriptionId,
+    ) -> jrpc::BoxFuture<jrpc::Result<bool>> {
+        Box::pin(sub_c(id))
     }
 
     fn list_all(&self, id: file::FileId) -> JrpcFutResult<Vec<file::FileMeta>> {
