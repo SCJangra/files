@@ -3,9 +3,10 @@ use futures::{self as futs, Stream, StreamExt, TryFutureExt, TryStreamExt};
 use std::path;
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::mpsc::{unbounded_channel, UnboundedReceiver},
+    sync::mpsc::unbounded_channel,
     task,
 };
+use tokio_stream::wrappers as tsw;
 pub use types::*;
 
 mod local;
@@ -59,7 +60,7 @@ pub async fn create_dir(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
 pub async fn copy_file(
     src: &FileId,
     dst_dir: &FileId,
-) -> anyhow::Result<UnboundedReceiver<anyhow::Result<Progress>>> {
+) -> anyhow::Result<impl Stream<Item = anyhow::Result<Progress>>> {
     let (s, r) = unbounded_channel();
 
     let sm = get_meta(src).await?;
@@ -111,7 +112,9 @@ pub async fn copy_file(
         anyhow::Ok(())
     });
 
-    Ok(r)
+    let s = tsw::UnboundedReceiverStream::new(r);
+
+    Ok(s)
 }
 
 pub async fn rename(id: &FileId, new_name: &str) -> anyhow::Result<FileId> {
@@ -143,7 +146,7 @@ pub async fn delete_dir(dir: &FileId) -> anyhow::Result<()> {
     }
 }
 
-pub async fn dfs(id: &FileId) -> anyhow::Result<UnboundedReceiver<anyhow::Result<FileMeta>>> {
+pub async fn dfs(id: &FileId) -> anyhow::Result<impl Stream<Item = anyhow::Result<FileMeta>>> {
     let (s, r) = unbounded_channel();
     let m = get_meta(id).await?;
 
@@ -182,5 +185,7 @@ pub async fn dfs(id: &FileId) -> anyhow::Result<UnboundedReceiver<anyhow::Result
         anyhow::Ok(())
     });
 
-    Ok(r)
+    let s = tsw::UnboundedReceiverStream::new(r);
+
+    Ok(s)
 }
