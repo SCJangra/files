@@ -7,10 +7,8 @@ use tokio::{
     task,
 };
 use tokio_stream::wrappers as tsw;
-pub use types::*;
 
-mod local;
-mod types;
+use super::{file_source::*, types::*};
 
 pub async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
     let FileId(source, id) = id;

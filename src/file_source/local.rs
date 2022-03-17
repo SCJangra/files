@@ -1,4 +1,5 @@
-use super::{FileId, FileMeta, FileSource, FileType};
+use crate::types::*;
+
 use anyhow::Context;
 use futures::{Stream, TryStreamExt};
 use std::path;
