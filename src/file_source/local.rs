@@ -157,16 +157,16 @@ pub async fn move_file(file: &path::Path, dir: &path::Path) -> anyhow::Result<Fi
     Ok(id)
 }
 
-pub async fn delete_file(file: &path::Path) -> anyhow::Result<()> {
+pub async fn delete_file(file: &path::Path) -> anyhow::Result<bool> {
     fs::remove_file(file)
         .await
         .with_context(|| format!("Could not delete file '{}'", file.to_string_lossy()))?;
-    Ok(())
+    Ok(true)
 }
 
-pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<()> {
+pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<bool> {
     fs::remove_dir(dir)
         .await
         .with_context(|| format!("Could not delete directory '{}'", dir.to_string_lossy()))?;
-    Ok(())
+    Ok(true)
 }

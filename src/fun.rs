@@ -130,14 +130,14 @@ pub async fn move_file(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
     }
 }
 
-pub async fn delete_file(file: &FileId) -> anyhow::Result<()> {
+pub async fn delete_file(file: &FileId) -> anyhow::Result<bool> {
     let FileId(source, id) = file;
     match source {
         FileSource::Local => local::delete_file(path::Path::new(id)).await,
     }
 }
 
-pub async fn delete_dir(dir: &FileId) -> anyhow::Result<()> {
+pub async fn delete_dir(dir: &FileId) -> anyhow::Result<bool> {
     let FileId(source, id) = dir;
     match source {
         FileSource::Local => local::delete_dir(path::Path::new(id)).await,
