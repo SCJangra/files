@@ -12,6 +12,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 futures = "0.3"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
+unwrap_or = "1.0"
 
 [feature]
 serde = ["serde"]
