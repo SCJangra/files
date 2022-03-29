@@ -1,5 +1,5 @@
 use anyhow::Context;
-use futures::{self as futs, Stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{self as futs, Stream, StreamExt, TryFutureExt};
 use futures_async_stream::{stream as a_stream, stream_block};
 use std::{path, sync::Arc, task::Poll};
 use tokio::{
@@ -78,48 +78,38 @@ pub async fn delete_dir(dir: &FileId) -> anyhow::Result<bool> {
     }
 }
 
-pub async fn dfs(id: &FileId) -> anyhow::Result<impl Stream<Item = anyhow::Result<FileMeta>>> {
-    let (s, r) = unbounded_channel();
-    let m = get_meta(id).await?;
+#[allow(clippy::needless_lifetimes)]
+#[a_stream(item = anyhow::Result<FileMeta>)]
+pub async fn dfs(file: &FileMeta) {
+    let file = file.to_owned();
 
-    task::spawn(async move {
-        let mut stack = vec![m];
+    let mut stack = vec![file];
 
-        while let Some(m) = stack.pop() {
-            if !matches!(m.file_type, FileType::Dir) {
-                s.send(Ok(m))?;
-                continue;
-            }
-
-            let list = match list_meta(&m.id).await {
-                Err(e) => {
-                    s.send(Ok(m))?;
-                    s.send(Err(e))?;
-                    continue;
-                }
-                Ok(l) => {
-                    s.send(Ok(m))?;
-                    l
-                }
-            };
-
-            list.map(|r| match r {
-                Err(e) => s.send(Err(e)),
-                Ok(m) => {
-                    stack.push(m);
-                    Ok(())
-                }
-            })
-            .try_for_each(|_| async { Ok(()) })
-            .await?;
+    while let Some(m) = stack.pop() {
+        if !matches!(m.file_type, FileType::Dir) {
+            yield Ok(m);
+            continue;
         }
 
-        anyhow::Ok(())
-    });
+        let list = list_meta(&m.id).await;
+        let list = unwrap_ok_or!(list, e, {
+            yield Poll::Ready(Ok(m));
+            yield Poll::Ready(Err(e));
+            continue;
+        });
 
-    let s = tsw::UnboundedReceiverStream::new(r);
+        yield Ok(m);
 
-    Ok(s)
+        #[for_await]
+        for r in list {
+            let f = unwrap_ok_or!(r, e, {
+                yield Poll::Ready(Err(e));
+                continue;
+            });
+
+            stack.push(f);
+        }
+    }
 }
 
 #[a_stream(item = anyhow::Result<CopyProg>)]
