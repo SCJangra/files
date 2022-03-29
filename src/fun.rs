@@ -1,6 +1,6 @@
 use anyhow::Context;
 use futures::{self as futs, Stream, StreamExt, TryFutureExt};
-use futures_async_stream::{stream as a_stream, stream_block, try_stream as a_try_stream};
+use futures_async_stream::{stream as a_stream, try_stream as a_try_stream};
 use std::{path, sync::Arc, task::Poll};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use unwrap_or::unwrap_ok_or;
@@ -124,11 +124,7 @@ pub async fn copy(files: Vec<Arc<FileMeta>>, dst: Arc<FileMeta>) {
             continue;
         }
 
-        let cps = clone_dir_structure(&f, &dst).await;
-        let cps = unwrap_ok_or!(cps, e, {
-            yield Poll::Ready(Err(e));
-            continue;
-        });
+        let cps = clone_dir_structure(&f, &dst);
 
         #[for_await]
         for r in cps {
@@ -183,58 +179,57 @@ pub fn mv<'a>(
         .buffer_unordered(1000)
 }
 
-async fn clone_dir_structure(
-    dir: &FileMeta,
-    dst: &FileMeta,
-) -> anyhow::Result<impl Stream<Item = anyhow::Result<(FileMeta, Arc<FileMeta>)>>> {
+#[a_stream(item = anyhow::Result<(FileMeta, Arc<FileMeta>)>)]
+async fn clone_dir_structure<'a>(dir: &'a FileMeta, dst: &'a FileMeta) {
     let sm = dir.to_owned();
     let dm = async {
         let id = create_dir(&sm.name, &dst.id).await?;
         get_meta(&id).await
     }
-    .await?;
+    .await;
 
-    let s = stream_block! {
-        let mut src_stack = vec![sm];
-        let mut dst_stack = vec![dm];
+    let dm = unwrap_ok_or!(dm, e, {
+        yield Poll::Ready(Err(e));
+        return;
+    });
 
-        while let (Some(sm), Some(dm)) = (src_stack.pop(), dst_stack.pop()) {
-            let dm = Arc::new(dm);
+    let mut src_stack = vec![sm];
+    let mut dst_stack = vec![dm];
 
-            let list = list_meta(&sm.id).await;
-            let list = unwrap_ok_or!(list, e, {
+    while let (Some(sm), Some(dm)) = (src_stack.pop(), dst_stack.pop()) {
+        let dm = Arc::new(dm);
+
+        let list = list_meta(&sm.id).await;
+        let list = unwrap_ok_or!(list, e, {
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        #[for_await]
+        for r in list {
+            let sm = unwrap_ok_or!(r, e, {
                 yield Poll::Ready(Err(e));
                 continue;
             });
 
-            #[for_await]
-            for r in list {
-                let sm = unwrap_ok_or!(r, e, {
-                    yield Poll::Ready(Err(e));
-                    continue;
-                });
-
-                if !matches!(sm.file_type, FileType::Dir) {
-                    yield Ok((sm, dm.clone()));
-                    continue;
-                }
-
-                let dm = create_dir(&sm.name, &dm.id)
-                    .and_then(|id| async move { get_meta(&id).await })
-                    .await;
-
-                let dm = unwrap_ok_or!(dm, e, {
-                    yield Poll::Ready(Err(e));
-                    continue;
-                });
-
-                src_stack.push(sm);
-                dst_stack.push(dm);
+            if !matches!(sm.file_type, FileType::Dir) {
+                yield Ok((sm, dm.clone()));
+                continue;
             }
-        }
-    };
 
-    Ok(s)
+            let dm = create_dir(&sm.name, &dm.id)
+                .and_then(|id| async move { get_meta(&id).await })
+                .await;
+
+            let dm = unwrap_ok_or!(dm, e, {
+                yield Poll::Ready(Err(e));
+                continue;
+            });
+
+            src_stack.push(sm);
+            dst_stack.push(dm);
+        }
+    }
 }
 
 #[a_try_stream(ok = u64, error = anyhow::Error)]
