@@ -1,6 +1,7 @@
 use anyhow::Context;
 use futures::{self as futs, Stream, StreamExt, TryFutureExt, TryStreamExt};
-use std::{path, sync::Arc};
+use futures_async_stream::stream_block;
+use std::{path, sync::Arc, task::Poll};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::mpsc::unbounded_channel,
@@ -143,10 +144,12 @@ pub async fn copy(
                 continue;
             }
 
-            let mut cps = unwrap_ok_or!(clone_dir_structure(&f.id, &dst.id).await, e, {
+            let cps = unwrap_ok_or!(clone_dir_structure(&f, &dst).await, e, {
                 s.send(Err(e))?;
                 continue;
             });
+
+            futs::pin_mut!(cps);
 
             while let Some(r) = cps.next().await {
                 let c = unwrap_ok_or!(r, e, {
@@ -211,61 +214,57 @@ pub async fn mv<'a>(
 }
 
 async fn clone_dir_structure(
-    dir: &FileId,
-    dst: &FileId,
+    dir: &FileMeta,
+    dst: &FileMeta,
 ) -> anyhow::Result<impl Stream<Item = anyhow::Result<(FileMeta, Arc<FileMeta>)>>> {
-    let (s, r) = unbounded_channel();
+    let sm = dir.to_owned();
+    let dm = async {
+        let id = create_dir(&sm.name, &dst.id).await?;
+        get_meta(&id).await
+    }
+    .await?;
 
-    let sm = get_meta(dir).await?;
-    let dm = create_dir(&sm.name, dst)
-        .and_then(|id| async move { get_meta(&id).await })
-        .await?;
+    let s = stream_block! {
+        let mut src_stack = vec![sm];
+        let mut dst_stack = vec![dm];
 
-    let mut src_stack = vec![sm];
-    let mut dst_stack = vec![dm];
-
-    task::spawn(async move {
         while let (Some(sm), Some(dm)) = (src_stack.pop(), dst_stack.pop()) {
             let dm = Arc::new(dm);
 
-            let list = match list_meta(&sm.id).await {
-                Err(e) => {
-                    s.send(Err(e))?;
+            let list = list_meta(&sm.id).await;
+            let list = unwrap_ok_or!(list, e, {
+                yield Poll::Ready(Err(e));
+                continue;
+            });
+
+            #[for_await]
+            for r in list {
+                let sm = unwrap_ok_or!(r, e, {
+                    yield Poll::Ready(Err(e));
                     continue;
-                }
-                Ok(l) => l,
-            };
-
-            futs::pin_mut!(list);
-
-            while let Some(r) = list.next().await {
-                let sm = match r {
-                    Err(e) => {
-                        s.send(Err(e))?;
-                        continue;
-                    }
-                    Ok(m) => m,
-                };
+                });
 
                 if !matches!(sm.file_type, FileType::Dir) {
-                    let copy = (sm, dm.clone());
-                    s.send(Ok(copy))?;
+                    yield Ok((sm, dm.clone()));
                     continue;
                 }
 
                 let dm = create_dir(&sm.name, &dm.id)
                     .and_then(|id| async move { get_meta(&id).await })
-                    .await?;
+                    .await;
+
+                let dm = unwrap_ok_or!(dm, e, {
+                    yield Poll::Ready(Err(e));
+                    continue;
+                });
 
                 src_stack.push(sm);
                 dst_stack.push(dm);
             }
         }
+    };
 
-        anyhow::Ok(())
-    });
-
-    Ok(tsw::UnboundedReceiverStream::new(r))
+    Ok(s)
 }
 
 async fn copy_file(
