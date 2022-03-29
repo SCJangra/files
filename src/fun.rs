@@ -63,14 +63,6 @@ pub async fn rename(id: &FileId, new_name: &str) -> anyhow::Result<FileId> {
     }
 }
 
-pub async fn move_file(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
-    match (&file.0, &dir.0) {
-        (FileSource::Local, FileSource::Local) => {
-            local::move_file(path::Path::new(&file.1), path::Path::new(&dir.1)).await
-        }
-    }
-}
-
 pub async fn delete_file(file: &FileId) -> anyhow::Result<bool> {
     let FileId(source, id) = file;
     match source {
@@ -209,6 +201,15 @@ pub async fn copy(
     tsw::UnboundedReceiverStream::new(r)
 }
 
+pub async fn mv<'a>(
+    files: &'a [FileMeta],
+    dir: &'a FileMeta,
+) -> impl Stream<Item = anyhow::Result<FileMeta>> + 'a {
+    futs::stream::iter(files.iter())
+        .map(|f| move_file(&f.id, &dir.id).and_then(|id| async move { get_meta(&id).await }))
+        .buffer_unordered(1000)
+}
+
 async fn clone_dir_structure(
     dir: &FileId,
     dst: &FileId,
@@ -317,4 +318,12 @@ async fn copy_file(
     let s = tsw::UnboundedReceiverStream::new(r);
 
     Ok(s)
+}
+
+async fn move_file(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
+    match (&file.0, &dir.0) {
+        (FileSource::Local, FileSource::Local) => {
+            local::move_file(path::Path::new(&file.1), path::Path::new(&dir.1)).await
+        }
+    }
 }
