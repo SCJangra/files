@@ -1,6 +1,6 @@
 use anyhow::Context;
 use futures::{self as futs, Stream, StreamExt, TryFutureExt, TryStreamExt};
-use futures_async_stream::stream_block;
+use futures_async_stream::{stream as a_stream, stream_block};
 use std::{path, sync::Arc, task::Poll};
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -122,86 +122,77 @@ pub async fn dfs(id: &FileId) -> anyhow::Result<impl Stream<Item = anyhow::Resul
     Ok(s)
 }
 
-pub async fn copy(
-    files: Vec<Arc<FileMeta>>,
-    dst: Arc<FileMeta>,
-) -> impl Stream<Item = anyhow::Result<CopyProg>> {
-    let (s, r) = unbounded_channel();
-
+#[a_stream(item = anyhow::Result<CopyProg>)]
+pub async fn copy(files: Vec<Arc<FileMeta>>, dst: Arc<FileMeta>) {
     let mut prog = CopyProg::default();
 
-    task::spawn(async move {
-        let mut cp = vec![];
+    let mut cp = vec![];
 
-        for f in files.into_iter() {
-            if !matches!(f.file_type, FileType::Dir) {
-                prog.files.total += 1;
-                prog.size.total += f.size;
+    for f in files.into_iter() {
+        if !matches!(f.file_type, FileType::Dir) {
+            prog.files.total += 1;
+            prog.size.total += f.size;
 
-                s.send(Ok(prog.clone()))?;
+            yield Ok(prog.clone());
 
-                cp.push((f, dst.clone()));
-                continue;
-            }
+            cp.push((f, dst.clone()));
+            continue;
+        }
 
-            let cps = unwrap_ok_or!(clone_dir_structure(&f, &dst).await, e, {
-                s.send(Err(e))?;
+        let cps = clone_dir_structure(&f, &dst).await;
+        let cps = unwrap_ok_or!(cps, e, {
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        #[for_await]
+        for r in cps {
+            let (f, d) = unwrap_ok_or!(r, e, {
+                yield Poll::Ready(Err(e));
                 continue;
             });
 
-            futs::pin_mut!(cps);
+            prog.files.total += 1;
+            prog.size.total += f.size;
 
-            while let Some(r) = cps.next().await {
-                let c = unwrap_ok_or!(r, e, {
-                    s.send(Err(e))?;
-                    continue;
-                });
+            yield Ok(prog.clone());
 
-                prog.files.total += 1;
-                prog.size.total += c.0.size;
-
-                s.send(Ok(prog.clone()))?;
-
-                cp.push((Arc::new(c.0), c.1));
-            }
+            cp.push((Arc::new(f), d));
         }
+    }
 
-        for (f, d) in cp.into_iter() {
-            let prog_stream = unwrap_ok_or!(copy_file(f.clone(), d).await, e, {
-                s.send(Err(e))?;
+    for (f, d) in cp.into_iter() {
+        let prog_stream = copy_file(f.clone(), d).await;
+        let prog_stream = unwrap_ok_or!(prog_stream, e, {
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        prog.current.name = f.name.clone();
+        prog.current.prog = Progress {
+            total: f.size,
+            ..Default::default()
+        };
+
+        yield Ok(prog.clone());
+
+        #[for_await]
+        for r in prog_stream {
+            let bytes = unwrap_ok_or!(r, e, {
+                yield Poll::Ready(Err(e));
                 continue;
             });
 
-            prog.current.name = f.name.clone();
-            prog.current.prog = Progress {
-                total: f.size,
-                ..Default::default()
-            };
+            prog.size.done += bytes;
+            prog.current.prog.done += bytes;
 
-            s.send(Ok(prog.clone()))?;
-
-            prog_stream
-                .map(|r| {
-                    let p = unwrap_ok_or!(r, e, {
-                        return s.send(Err(e));
-                    });
-
-                    prog.size.done += p;
-                    prog.current.prog.done += p;
-
-                    s.send(Ok(prog.clone()))
-                })
-                .try_for_each(|_| async move { Ok(()) })
-                .await?;
-
-            prog.files.done += 1;
-            s.send(Ok(prog.clone()))?;
+            yield Ok(prog.clone());
         }
 
-        anyhow::Ok(())
-    });
+        prog.files.done += 1;
 
-    tsw::UnboundedReceiverStream::new(r)
+        yield Ok(prog.clone());
+    }
 }
 
 pub async fn mv<'a>(
