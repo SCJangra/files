@@ -1,13 +1,8 @@
 use anyhow::Context;
 use futures::{self as futs, Stream, StreamExt, TryFutureExt};
-use futures_async_stream::{stream as a_stream, stream_block};
+use futures_async_stream::{stream as a_stream, stream_block, try_stream as a_try_stream};
 use std::{path, sync::Arc, task::Poll};
-use tokio::{
-    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    sync::mpsc::unbounded_channel,
-    task,
-};
-use tokio_stream::wrappers as tsw;
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use unwrap_or::unwrap_ok_or;
 
 use super::{file_source::*, types::*};
@@ -152,12 +147,6 @@ pub async fn copy(files: Vec<Arc<FileMeta>>, dst: Arc<FileMeta>) {
     }
 
     for (f, d) in cp.into_iter() {
-        let prog_stream = copy_file(f.clone(), d).await;
-        let prog_stream = unwrap_ok_or!(prog_stream, e, {
-            yield Poll::Ready(Err(e));
-            continue;
-        });
-
         prog.current.name = f.name.clone();
         prog.current.prog = Progress {
             total: f.size,
@@ -167,7 +156,7 @@ pub async fn copy(files: Vec<Arc<FileMeta>>, dst: Arc<FileMeta>) {
         yield Ok(prog.clone());
 
         #[for_await]
-        for r in prog_stream {
+        for r in copy_file(f.clone(), d) {
             let bytes = unwrap_ok_or!(r, e, {
                 yield Poll::Ready(Err(e));
                 continue;
@@ -248,56 +237,41 @@ async fn clone_dir_structure(
     Ok(s)
 }
 
-async fn copy_file(
-    src: Arc<FileMeta>,
-    dst: Arc<FileMeta>,
-) -> anyhow::Result<impl Stream<Item = anyhow::Result<u64>>> {
-    let (s, r) = unbounded_channel();
-
+#[allow(clippy::needless_lifetimes)]
+#[a_try_stream(ok = u64, error = anyhow::Error)]
+async fn copy_file(src: Arc<FileMeta>, dst: Arc<FileMeta>) {
     let dm = create_file(&src.name, &dst.id)
         .and_then(|id| async move { get_meta(&id).await })
         .await?;
 
-    let (rd, wr) = futs::try_join!(read(&src.id), write(&dm.id, true))?;
+    let (rd, wr) = futs::future::try_join(read(&src.id), write(&dm.id, true)).await?;
 
     let mut reader = io::BufReader::new(rd);
     let mut writer = io::BufWriter::new(wr);
     let mut buf = vec![0; 10_000_000];
 
-    task::spawn(async move {
-        loop {
-            let res = async {
-                let bytes = reader
-                    .read(&mut buf)
-                    .await
-                    .with_context(|| format!("Error while reading file {}", src.name))?;
+    loop {
+        let bytes = async {
+            let bytes = reader
+                .read(&mut buf)
+                .await
+                .with_context(|| format!("Error while reading file {}", src.name))?;
 
-                writer
-                    .write_all(&buf[..bytes])
-                    .await
-                    .with_context(|| format!("Error while writing to file {}", dm.name))?;
+            writer
+                .write_all(&buf[..bytes])
+                .await
+                .with_context(|| format!("Error while writing to file {}", dm.name))?;
 
-                anyhow::Ok(bytes)
-            }
-            .await;
-
-            match res {
-                Err(e) => {
-                    s.send(Err(e))?;
-                    break;
-                }
-                Ok(b) if b == 0 => {
-                    break;
-                }
-                Ok(b) => s.send(Ok(b as u64))?,
-            };
+            anyhow::Ok(bytes)
         }
-        anyhow::Ok(())
-    });
+        .await?;
 
-    let s = tsw::UnboundedReceiverStream::new(r);
+        if bytes == 0 {
+            break;
+        }
 
-    Ok(s)
+        yield bytes as u64;
+    }
 }
 
 async fn move_file(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
