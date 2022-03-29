@@ -174,7 +174,7 @@ pub async fn copy(files: Vec<Arc<FileMeta>>, dst: Arc<FileMeta>) {
     }
 }
 
-pub async fn mv<'a>(
+pub fn mv<'a>(
     files: &'a [FileMeta],
     dir: &'a FileMeta,
 ) -> impl Stream<Item = anyhow::Result<FileMeta>> + 'a {
