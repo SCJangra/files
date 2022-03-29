@@ -237,7 +237,6 @@ async fn clone_dir_structure(
     Ok(s)
 }
 
-#[allow(clippy::needless_lifetimes)]
 #[a_try_stream(ok = u64, error = anyhow::Error)]
 async fn copy_file(src: Arc<FileMeta>, dst: Arc<FileMeta>) {
     let dm = create_file(&src.name, &dst.id)
