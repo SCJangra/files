@@ -82,11 +82,13 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
         }
     }
 
-    let cp1 = cp1
-        .iter()
-        .flat_map(|(files, d)| files.iter().map(move |f| (f, d)));
+    for (files, d) in cp1.iter() {
+        for f in files {
+            cp.push((f, d));
+        }
+    }
 
-    'outer: for (f, d) in cp.into_iter().chain(cp1) {
+    'outer: for (f, d) in cp.into_iter() {
         prog.current.name = f.name.clone();
         prog.current.prog = Progress {
             total: f.size,
