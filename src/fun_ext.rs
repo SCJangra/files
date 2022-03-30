@@ -82,13 +82,14 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
         }
     }
 
-    for (files, d) in cp1.iter() {
-        for f in files {
-            cp.push((f, d));
-        }
+    fn get_iter(val: &(Vec<FileMeta>, FileMeta)) -> impl Iterator<Item = (&FileMeta, &FileMeta)> {
+        let (files, dir) = val;
+        files.iter().map(|f| (f, &*dir))
     }
 
-    'outer: for (f, d) in cp.into_iter() {
+    let cp = cp.into_iter().chain(cp1.iter().flat_map(get_iter));
+
+    'outer: for (f, d) in cp {
         prog.current.name = f.name.clone();
         prog.current.prog = Progress {
             total: f.size,
@@ -247,14 +248,20 @@ pub async fn delete<'a>(files: &'a [FileMeta]) {
         }
     }
 
-    let fls = fls.into_iter().chain(fls1.iter());
-    let drs = drs.iter().rev();
+    fn get_iter<'a>(i: Vec<&'a FileMeta>, j: &'a [FileMeta]) -> impl Iterator<Item = &'a FileMeta> {
+        i.into_iter().chain(j.iter())
+    }
 
-    let fls_stream = futs::stream::iter(fls)
-        .map(|f| async move { delete_file(&f.id).await })
+    fn get_fut(file: &FileMeta) -> impl futs::Future<Output = anyhow::Result<bool>> + '_ {
+        delete_file(&file.id)
+    }
+
+    let fls_stream = futs::stream::iter(get_iter(fls, &fls1[..]))
+        .map(get_fut)
         .buffer_unordered(1000);
 
-    let drs_stream = futs::stream::iter(drs).then(|d| async move { delete_dir(&d.id).await });
+    let drs_stream =
+        futs::stream::iter(drs.iter().rev()).then(|d| async move { delete_dir(&d.id).await });
 
     let del_stream = fls_stream.chain(drs_stream);
 
