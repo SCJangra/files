@@ -180,7 +180,7 @@ pub async fn clone_dir_structure<'a>(dir: &'a FileMeta, dst: &'a FileMeta) {
 
 #[allow(clippy::needless_lifetimes)]
 #[stream(item = anyhow::Result<FileMeta>)]
-pub async fn dfs(file: &FileMeta) {
+pub async fn dfs<'a>(file: &'a FileMeta) {
     let file = file.to_owned();
 
     let mut stack = vec![file];
@@ -209,5 +209,63 @@ pub async fn dfs(file: &FileMeta) {
 
             stack.push(f);
         }
+    }
+}
+
+#[allow(clippy::needless_lifetimes)]
+#[stream(item = anyhow::Result<Progress>)]
+pub async fn delete<'a>(files: &'a [FileMeta]) {
+    let mut fls = vec![];
+    let mut fls1 = vec![];
+    let mut drs = vec![];
+
+    let mut prog = Progress::default();
+
+    for f in files {
+        if !matches!(f.file_type, FileType::Dir) {
+            prog.total += 1;
+            yield Ok(prog.clone());
+            fls.push(f);
+            continue;
+        }
+
+        #[for_await]
+        for r in dfs(f) {
+            let f = unwrap_ok_or!(r, e, {
+                yield Poll::Ready(Err(e));
+                continue;
+            });
+
+            if !matches!(f.file_type, FileType::Dir) {
+                fls1.push(f);
+            } else {
+                drs.push(f);
+            }
+
+            prog.total += 1;
+            yield Ok(prog.clone());
+        }
+    }
+
+    let fls = fls.into_iter().chain(fls1.iter());
+    let drs = drs.iter().rev();
+
+    let fls_stream = futs::stream::iter(fls)
+        .map(|f| async move { delete_file(&f.id).await })
+        .buffer_unordered(1000);
+
+    let drs_stream = futs::stream::iter(drs).then(|d| async move { delete_dir(&d.id).await });
+
+    let del_stream = fls_stream.chain(drs_stream);
+
+    #[for_await]
+    for r in del_stream {
+        let _ = unwrap_ok_or!(r, e, {
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        prog.done += 1;
+        yield Ok(prog.clone());
     }
 }
