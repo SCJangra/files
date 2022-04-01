@@ -1,7 +1,7 @@
 use {
     crate::{fun::*, types::*},
     anyhow::Context,
-    futures::{self as futs, Stream, StreamExt, TryFutureExt},
+    futures::{self as futs, StreamExt, TryFutureExt},
     futures_async_stream::{stream, try_stream},
     std::task::Poll,
     tokio::io::{self, AsyncReadExt, AsyncWriteExt},
@@ -117,13 +117,38 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
     }
 }
 
-pub fn mv<'a>(
-    files: &'a [FileMeta],
-    dir: &'a FileMeta,
-) -> impl Stream<Item = anyhow::Result<FileMeta>> + 'a {
-    futs::stream::iter(files.iter())
-        .map(|f| move_file(&f.id, &dir.id).and_then(|id| async move { get_meta(&id).await }))
-        .buffer_unordered(1000)
+#[stream(item = anyhow::Result<Progress>)]
+pub async fn mv<'a>(files: &'a [FileMeta], dir: &'a FileMeta) {
+    let mut prog = Progress::default();
+
+    fn get_fut<'a>(
+        fd: (&'a FileId, &'a FileId),
+    ) -> impl futs::Future<Output = anyhow::Result<FileId>> + 'a {
+        let (f, d) = fd;
+        move_file(f, d)
+    }
+
+    fn get_iter<'a>(
+        files: &'a [FileMeta],
+        dir: &'a FileMeta,
+    ) -> impl Iterator<Item = (&'a FileId, &'a FileId)> + 'a {
+        files.iter().map(|f| (&f.id, &dir.id))
+    }
+
+    let s = futs::stream::iter(get_iter(files, dir))
+        .map(get_fut)
+        .buffer_unordered(1000);
+
+    #[for_await]
+    for r in s {
+        let _ = unwrap_ok_or!(r, e, {
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        prog.done += 1;
+        yield Ok(prog.clone());
+    }
 }
 
 #[stream(item = anyhow::Result<(Vec<FileMeta>, FileMeta)>)]
