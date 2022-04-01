@@ -77,3 +77,10 @@ pub async fn delete_dir(dir: &FileId) -> anyhow::Result<bool> {
         FileSource::Local => local::delete_dir(path::Path::new(id)).await,
     }
 }
+
+pub async fn get_mime(file: &FileId) -> anyhow::Result<String> {
+    let FileId(source, id) = file;
+    match source {
+        FileSource::Local => local::get_mime(path::Path::new(id)).await,
+    }
+}

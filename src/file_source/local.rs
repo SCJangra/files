@@ -6,6 +6,7 @@ use std::path;
 use tokio::{
     fs,
     io::{AsyncRead, AsyncWrite},
+    task,
 };
 use tokio_stream::wrappers as tsw;
 
@@ -169,4 +170,20 @@ pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<bool> {
         .await
         .with_context(|| format!("Could not delete directory '{}'", dir.to_string_lossy()))?;
     Ok(true)
+}
+
+pub async fn get_mime(file: &path::Path) -> anyhow::Result<String> {
+    let file = file.to_owned();
+
+    task::spawn_blocking(move || {
+        tree_magic_mini::from_filepath(file.as_path())
+            .map(|s| s.to_string())
+            .with_context(|| {
+                format!(
+                    "Could not get mime type for file '{}'",
+                    file.to_string_lossy()
+                )
+            })
+    })
+    .await?
 }
