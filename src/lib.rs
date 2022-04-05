@@ -1,4 +1,4 @@
-#![feature(generators, proc_macro_hygiene, stmt_expr_attributes)]
+#![feature(generators)]
 
 mod file_source;
 pub mod fun;
