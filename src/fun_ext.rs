@@ -3,7 +3,7 @@ use {
     anyhow::Context,
     futures::{self as futs, StreamExt, TryFutureExt},
     futures_async_stream::{stream, try_stream},
-    std::task::Poll,
+    std::{task::Poll, time::Instant},
     tokio::io::{self, AsyncReadExt, AsyncWriteExt},
     unwrap_or::unwrap_ok_or,
 };
@@ -45,8 +45,10 @@ pub async fn copy_file<'a>(src: &'a FileMeta, dst: &'a FileMeta) {
 }
 
 #[stream(item = anyhow::Result<CopyProg>)]
-pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
+pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta, prog_interval: u128) {
     let mut prog = CopyProg::default();
+
+    let mut instant = Instant::now();
 
     let mut cp = vec![];
     let mut cp1 = vec![];
@@ -56,7 +58,10 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
             prog.files.total += 1;
             prog.size.total += f.size;
 
-            yield Ok(prog.clone());
+            if instant.elapsed().as_millis() >= prog_interval {
+                instant = Instant::now();
+                yield Ok(prog.clone());
+            }
 
             cp.push((f, dst));
             continue;
@@ -78,7 +83,10 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
             prog.files.total += files.len() as u64;
             prog.size.total += files.iter().map(|f| f.size).sum::<u64>();
 
-            yield Ok(prog.clone());
+            if instant.elapsed().as_millis() >= prog_interval {
+                instant = Instant::now();
+                yield Ok(prog.clone());
+            }
         }
     }
 
@@ -96,7 +104,10 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
             ..Default::default()
         };
 
-        yield Ok(prog.clone());
+        if instant.elapsed().as_millis() >= prog_interval {
+            instant = Instant::now();
+            yield Ok(prog.clone());
+        }
 
         #[for_await]
         for r in copy_file(f, d) {
@@ -108,13 +119,21 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta) {
             prog.size.done += bytes;
             prog.current.prog.done += bytes;
 
-            yield Ok(prog.clone());
+            if instant.elapsed().as_millis() >= prog_interval {
+                instant = Instant::now();
+                yield Ok(prog.clone());
+            }
         }
 
         prog.files.done += 1;
 
-        yield Ok(prog.clone());
+        if instant.elapsed().as_millis() >= prog_interval {
+            instant = Instant::now();
+            yield Ok(prog.clone());
+        }
     }
+
+    yield Ok(prog.clone());
 }
 
 #[stream(item = anyhow::Result<Progress>)]
