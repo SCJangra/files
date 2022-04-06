@@ -42,6 +42,8 @@ pub async fn copy_file<'a>(src: &'a FileMeta, dst: &'a FileMeta) {
 
         yield bytes as u64;
     }
+
+    writer.flush().await?;
 }
 
 #[stream(item = anyhow::Result<CopyProg>)]
