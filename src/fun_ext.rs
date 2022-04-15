@@ -1,7 +1,7 @@
 use {
     crate::{fun::*, types::*},
     anyhow::Context,
-    futures::{self as futs, StreamExt, TryFutureExt},
+    futures::{self as futs, Stream, StreamExt, TryFutureExt},
     futures_async_stream::{stream, try_stream},
     std::{task::Poll, time::Instant},
     tokio::io::{self, AsyncReadExt, AsyncWriteExt},
@@ -321,4 +321,10 @@ pub async fn delete_all<'a>(files: &'a [FileMeta]) {
         prog.done += 1;
         yield Ok(prog.clone());
     }
+}
+
+pub fn rename_all(rn: &[(FileMeta, String)]) -> impl Stream<Item = anyhow::Result<FileId>> + '_ {
+    futs::stream::iter(rn.iter())
+        .map(|a| rename(&a.0.id, &a.1))
+        .buffered(1000)
 }
