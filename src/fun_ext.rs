@@ -1,7 +1,7 @@
 use {
     crate::{fun::*, types::*},
     anyhow::Context,
-    futures::{self as futs, Stream, StreamExt, TryFutureExt},
+    futures::{self as futs, StreamExt, TryFutureExt},
     futures_async_stream::{stream, try_stream},
     std::{task::Poll, time::Instant},
     tokio::io::{self, AsyncReadExt, AsyncWriteExt},
@@ -323,8 +323,36 @@ pub async fn delete_all<'a>(files: &'a [FileMeta]) {
     }
 }
 
-pub fn rename_all(rn: &[(FileMeta, String)]) -> impl Stream<Item = anyhow::Result<FileId>> + '_ {
-    futs::stream::iter(rn.iter())
-        .map(|a| rename(&a.0.id, &a.1))
-        .buffered(1000)
+#[allow(clippy::needless_lifetimes)]
+#[stream(item = anyhow::Result<Progress>)]
+pub async fn rename_all<'a>(rn: &'a [(FileMeta, String)]) {
+    let mut prog = Progress::default();
+
+    fn get_fut<'a>(
+        rn: &'a (FileMeta, String),
+    ) -> impl futs::Future<Output = anyhow::Result<FileId>> + 'a {
+        let (f, n) = rn;
+        rename(&f.id, n)
+    }
+
+    fn get_iter<'a>(
+        rn: &'a [(FileMeta, String)],
+    ) -> impl Iterator<Item = &'a (FileMeta, String)> + 'a {
+        rn.iter()
+    }
+
+    let s = futs::stream::iter(get_iter(rn))
+        .map(get_fut)
+        .buffer_unordered(1000);
+
+    #[for_await]
+    for r in s {
+        let _ = unwrap_ok_or!(r, e, {
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        prog.done += 1;
+        yield Ok(prog.clone());
+    }
 }
