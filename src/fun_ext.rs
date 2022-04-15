@@ -8,6 +8,93 @@ use {
     unwrap_or::unwrap_ok_or,
 };
 
+#[stream(item = anyhow::Result<(Vec<FileMeta>, FileMeta)>)]
+pub async fn clone_dir_structure<'a>(dir: &'a FileMeta, dst: &'a FileMeta) {
+    let sm = dir.to_owned();
+    let dm = async {
+        let id = create_dir(&sm.name, &dst.id).await?;
+        get_meta(&id).await
+    }
+    .await;
+
+    let dm = unwrap_ok_or!(dm, e, {
+        yield Poll::Ready(Err(e));
+        return;
+    });
+
+    let mut src_stack = vec![sm];
+    let mut dst_stack = vec![dm];
+
+    while let (Some(sm), Some(dm)) = (src_stack.pop(), dst_stack.pop()) {
+        let list = list_meta(&sm.id).await;
+        let list = unwrap_ok_or!(list, e, {
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        let mut files = vec![];
+        #[for_await]
+        for r in list {
+            let sm = unwrap_ok_or!(r, e, {
+                yield Poll::Ready(Err(e));
+                continue;
+            });
+
+            if !matches!(sm.file_type, FileType::Dir) {
+                files.push(sm);
+                continue;
+            }
+
+            let dm = create_dir(&sm.name, &dm.id)
+                .and_then(|id| async move { get_meta(&id).await })
+                .await;
+
+            let dm = unwrap_ok_or!(dm, e, {
+                yield Poll::Ready(Err(e));
+                continue;
+            });
+
+            src_stack.push(sm);
+            dst_stack.push(dm);
+        }
+        yield Ok((files, dm));
+    }
+}
+
+#[allow(clippy::needless_lifetimes)]
+#[stream(item = anyhow::Result<FileMeta>)]
+pub async fn dfs<'a>(file: &'a FileMeta) {
+    let file = file.to_owned();
+
+    let mut stack = vec![file];
+
+    while let Some(m) = stack.pop() {
+        if !matches!(m.file_type, FileType::Dir) {
+            yield Ok(m);
+            continue;
+        }
+
+        let list = list_meta(&m.id).await;
+        let list = unwrap_ok_or!(list, e, {
+            yield Poll::Ready(Ok(m));
+            yield Poll::Ready(Err(e));
+            continue;
+        });
+
+        yield Ok(m);
+
+        #[for_await]
+        for r in list {
+            let f = unwrap_ok_or!(r, e, {
+                yield Poll::Ready(Err(e));
+                continue;
+            });
+
+            stack.push(f);
+        }
+    }
+}
+
 #[try_stream(ok = u64, error = anyhow::Error)]
 pub async fn copy_file<'a>(src: &'a FileMeta, dst: &'a FileMeta) {
     let dm = create_file(&src.name, &dst.id)
@@ -47,7 +134,7 @@ pub async fn copy_file<'a>(src: &'a FileMeta, dst: &'a FileMeta) {
 }
 
 #[stream(item = anyhow::Result<CopyProg>)]
-pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta, prog_interval: u128) {
+pub async fn copy_all<'a>(files: &'a [FileMeta], dst: &'a FileMeta, prog_interval: u128) {
     let mut prog = CopyProg::default();
 
     let mut instant = Instant::now();
@@ -139,14 +226,14 @@ pub async fn copy<'a>(files: &'a [FileMeta], dst: &'a FileMeta, prog_interval: u
 }
 
 #[stream(item = anyhow::Result<Progress>)]
-pub async fn mv<'a>(files: &'a [FileMeta], dir: &'a FileMeta) {
+pub async fn mv_all<'a>(files: &'a [FileMeta], dir: &'a FileMeta) {
     let mut prog = Progress::default();
 
     fn get_fut<'a>(
         fd: (&'a FileId, &'a FileId),
     ) -> impl futs::Future<Output = anyhow::Result<FileId>> + 'a {
         let (f, d) = fd;
-        move_file(f, d)
+        mv(f, d)
     }
 
     fn get_iter<'a>(
@@ -172,96 +259,9 @@ pub async fn mv<'a>(files: &'a [FileMeta], dir: &'a FileMeta) {
     }
 }
 
-#[stream(item = anyhow::Result<(Vec<FileMeta>, FileMeta)>)]
-pub async fn clone_dir_structure<'a>(dir: &'a FileMeta, dst: &'a FileMeta) {
-    let sm = dir.to_owned();
-    let dm = async {
-        let id = create_dir(&sm.name, &dst.id).await?;
-        get_meta(&id).await
-    }
-    .await;
-
-    let dm = unwrap_ok_or!(dm, e, {
-        yield Poll::Ready(Err(e));
-        return;
-    });
-
-    let mut src_stack = vec![sm];
-    let mut dst_stack = vec![dm];
-
-    while let (Some(sm), Some(dm)) = (src_stack.pop(), dst_stack.pop()) {
-        let list = list_meta(&sm.id).await;
-        let list = unwrap_ok_or!(list, e, {
-            yield Poll::Ready(Err(e));
-            continue;
-        });
-
-        let mut files = vec![];
-        #[for_await]
-        for r in list {
-            let sm = unwrap_ok_or!(r, e, {
-                yield Poll::Ready(Err(e));
-                continue;
-            });
-
-            if !matches!(sm.file_type, FileType::Dir) {
-                files.push(sm);
-                continue;
-            }
-
-            let dm = create_dir(&sm.name, &dm.id)
-                .and_then(|id| async move { get_meta(&id).await })
-                .await;
-
-            let dm = unwrap_ok_or!(dm, e, {
-                yield Poll::Ready(Err(e));
-                continue;
-            });
-
-            src_stack.push(sm);
-            dst_stack.push(dm);
-        }
-        yield Ok((files, dm));
-    }
-}
-
-#[allow(clippy::needless_lifetimes)]
-#[stream(item = anyhow::Result<FileMeta>)]
-pub async fn dfs<'a>(file: &'a FileMeta) {
-    let file = file.to_owned();
-
-    let mut stack = vec![file];
-
-    while let Some(m) = stack.pop() {
-        if !matches!(m.file_type, FileType::Dir) {
-            yield Ok(m);
-            continue;
-        }
-
-        let list = list_meta(&m.id).await;
-        let list = unwrap_ok_or!(list, e, {
-            yield Poll::Ready(Ok(m));
-            yield Poll::Ready(Err(e));
-            continue;
-        });
-
-        yield Ok(m);
-
-        #[for_await]
-        for r in list {
-            let f = unwrap_ok_or!(r, e, {
-                yield Poll::Ready(Err(e));
-                continue;
-            });
-
-            stack.push(f);
-        }
-    }
-}
-
 #[allow(clippy::needless_lifetimes)]
 #[stream(item = anyhow::Result<Progress>)]
-pub async fn delete<'a>(files: &'a [FileMeta]) {
+pub async fn delete_all<'a>(files: &'a [FileMeta]) {
     let mut fls = vec![];
     let mut fls1 = vec![];
     let mut drs = vec![];

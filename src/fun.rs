@@ -56,10 +56,10 @@ pub async fn rename(id: &FileId, new_name: &str) -> anyhow::Result<FileId> {
     }
 }
 
-pub async fn move_file(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
+pub async fn mv(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
     match (&file.0, &dir.0) {
         (FileSource::Local, FileSource::Local) => {
-            local::move_file(path::Path::new(&file.1), path::Path::new(&dir.1)).await
+            local::mv(path::Path::new(&file.1), path::Path::new(&dir.1)).await
         }
     }
 }

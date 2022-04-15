@@ -132,7 +132,7 @@ pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<FileId>
     Ok(id)
 }
 
-pub async fn move_file(file: &path::Path, dir: &path::Path) -> anyhow::Result<FileId> {
+pub async fn mv(file: &path::Path, dir: &path::Path) -> anyhow::Result<FileId> {
     let mut dir_pb = path::PathBuf::from(dir);
     let name = match file.file_name() {
         Some(n) => n,
