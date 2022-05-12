@@ -123,6 +123,13 @@ pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<FileId>
     let mut path = path::PathBuf::from(file);
     path.set_file_name(new_name);
 
+    if path.exists() {
+        return Err(anyhow::anyhow!(
+            "A file with name '{}' already exists!",
+            new_name.to_string()
+        ));
+    }
+
     fs::rename(file, path.as_path())
         .await
         .with_context(|| format!("Could not rename file '{}'", file.to_string_lossy()))?;
