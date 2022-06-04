@@ -1,3 +1,6 @@
+#[cfg(feature = "google_drive")]
+pub mod google_drive;
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +30,8 @@ pub struct FileId(pub FileSource, pub String);
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum FileSource {
     Local,
+    #[cfg(feature = "google_drive")]
+    GoogleDrive(String),
 }
 
 #[derive(Debug, Clone, Default)]
