@@ -4,6 +4,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::file_source::local;
 
+#[cfg(feature = "google_drive")]
+use super::file_source::google_drive as gd_fn;
+
 use super::types::*;
 
 pub async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
@@ -11,7 +14,7 @@ pub async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
     match source {
         FileSource::Local => local::get_meta(path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(name) => gd_fn::get_meta(name, id).await,
     }
 }
 
