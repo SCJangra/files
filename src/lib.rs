@@ -1,5 +1,3 @@
-#![feature(generators)]
-
 mod file_source;
 
 pub mod add_config;
