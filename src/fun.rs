@@ -1,3 +1,4 @@
+use async_stream::stream;
 use futures::Stream;
 use std::path;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -5,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use super::file_source::local;
 
 #[cfg(feature = "google_drive")]
-use super::file_source::google_drive as gd_fn;
+use super::file_source::google_drive as gd_fs;
 
 use super::types::*;
 
@@ -14,19 +15,29 @@ pub async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
     match source {
         FileSource::Local => local::get_meta(path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(name) => gd_fn::get_meta(name, id).await,
+        FileSource::GoogleDrive(name) => gd_fs::get_meta(name, id).await,
     }
 }
 
-pub async fn list_meta(
-    id: &FileId,
-) -> anyhow::Result<impl Stream<Item = anyhow::Result<FileMeta>>> {
+pub fn list_meta(id: &FileId) -> impl Stream<Item = anyhow::Result<FileMeta>> + '_ {
     let FileId(source, id) = id;
 
-    match source {
-        FileSource::Local => local::list_meta(path::Path::new(id)).await,
-        #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+    stream! {
+        match source {
+            FileSource::Local => {
+                let s = local::list_meta(path::Path::new(id));
+                for await v in s {
+                    yield v;
+                }
+            }
+            #[cfg(feature = "google_drive")]
+            FileSource::GoogleDrive(name) => {
+                let s = gd_fs::list_meta(name, id);
+                for await v in s {
+                    yield v;
+                }
+            },
+        }
     }
 }
 

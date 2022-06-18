@@ -1,6 +1,7 @@
 use crate::types::*;
 
 use anyhow::Context;
+use async_stream::stream;
 use futures::{Stream, TryStreamExt};
 use std::path;
 use tokio::{
@@ -9,6 +10,7 @@ use tokio::{
     task,
 };
 use tokio_stream::wrappers as tsw;
+use unwrap_or::unwrap_ok_or;
 
 pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     let id = path.to_string_lossy().to_string();
@@ -46,21 +48,24 @@ pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     })
 }
 
-pub async fn list_meta(
-    path: &path::Path,
-) -> anyhow::Result<impl Stream<Item = anyhow::Result<FileMeta>>> {
-    let id = path.to_string_lossy().to_string();
-    let rd = fs::read_dir(path)
-        .await
-        .with_context(|| format!("Could not read directory '{}'", id))?;
+pub fn list_meta(path: &path::Path) -> impl Stream<Item = anyhow::Result<FileMeta>> + '_ {
+    stream! {
+        let id = path.to_string_lossy().to_string();
+        let rd = fs::read_dir(path)
+            .await
+            .with_context(|| format!("Could not read directory '{}'", id));
+        let rd = unwrap_ok_or!(rd, e, {
+            yield Err(e);
+            return;
+        });
 
-    let s = tsw::ReadDirStream::new(rd)
-        .map_err(move |e| {
-            anyhow::Error::new(e).context(format!("Error while reading directory '{}'", id))
-        })
-        .and_then(|d| async move { get_meta(d.path().as_path()).await });
-
-    Ok(s)
+        let s = tsw::ReadDirStream::new(rd)
+            .map_err(move |e| {
+                anyhow::Error::new(e).context(format!("Error while reading directory '{}'", id))
+            })
+            .and_then(|d| async move { get_meta(d.path().as_path()).await });
+        for await v in s { yield v; }
+    }
 }
 
 pub async fn read(path: &path::Path) -> anyhow::Result<impl AsyncRead> {

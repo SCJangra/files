@@ -19,7 +19,7 @@ async fn refresh_token(
     client_secret: &str,
     refresh_token: &str,
 ) -> anyhow::Result<RefreshToken> {
-    let res = HTTP
+    let res: Res = HTTP
         .post(TOKEN_URI)
         .form(&[
             ("client_id", client_id),
@@ -30,12 +30,8 @@ async fn refresh_token(
         .send()
         .await
         .with_context(|| format!("Could not send post request to '{}'", TOKEN_URI))?
-        // TODO: Do error handeling here
-        .text()
-        .await
-        .with_context(|| "Could not get access token")?;
-
-    serde_json::from_str::<RefreshToken>(&res).with_context(|| "Could not parse access token")
+        .into();
+    res.json::<RefreshToken>().await
 }
 
 pub async fn get_tokne(name: &str) -> anyhow::Result<String> {

@@ -30,11 +30,7 @@ pub fn clone_dir_structure<'a>(
         let mut dst_stack = vec![dm];
 
         while let (Some(sm), Some(dm)) = (src_stack.pop(), dst_stack.pop()) {
-            let list = list_meta(&sm.id).await;
-            let list = unwrap_ok_or!(list, e, {
-                yield Err(e);
-                continue;
-            });
+            let list = list_meta(&sm.id);
 
             let mut files = vec![];
             for await r in list {
@@ -77,14 +73,7 @@ pub fn dfs(file: &FileMeta) -> impl Stream<Item = anyhow::Result<FileMeta>> {
                 continue;
             }
 
-            let list = list_meta(&m.id).await;
-            let list = unwrap_ok_or!(list, e, {
-                yield Ok(m);
-                yield Err(e);
-                continue;
-            });
-
-            yield Ok(m);
+            let list = list_meta(&m.id);
 
             for await r in list {
                 let f = unwrap_ok_or!(r, e, {
@@ -94,6 +83,8 @@ pub fn dfs(file: &FileMeta) -> impl Stream<Item = anyhow::Result<FileMeta>> {
 
                 stack.push(f);
             }
+
+            yield Ok(m);
         }
     }
 }
