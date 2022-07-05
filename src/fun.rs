@@ -52,7 +52,9 @@ pub async fn read(id: &FileId) -> anyhow::Result<DynAsyncRead> {
             .await
             .map(|r| -> DynAsyncRead { Box::pin(r) }),
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(name) => gd_fs::read(name, id)
+            .await
+            .map(|r| -> DynAsyncRead { Box::pin(r) }),
     }
 }
 
