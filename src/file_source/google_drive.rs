@@ -1,29 +1,37 @@
 mod api;
 
-use crate::types::*;
+use crate::types::{google_drive::*, *};
 pub use api::oauth::CONFIGS;
-use async_stream::stream;
+use async_stream::try_stream;
 use futures::Stream;
-use unwrap_or::unwrap_ok_or;
 
 pub async fn get_meta(name: &str, id: &str) -> anyhow::Result<FileMeta> {
-    let df = api::res::files::get(name, id).await?;
+    let res: Res = api::res::files::get(name, id, false).await?.into();
 
-    Ok((df, name).into())
+    let m = res.json::<DriveFile>().await?;
+
+    Ok((m, name).into())
 }
 
 pub fn list_meta<'a>(
     name: &'a str,
     parent_id: &'a str,
 ) -> impl Stream<Item = anyhow::Result<FileMeta>> + 'a {
-    stream! {
-        let files = api::res::files::list(name, parent_id).await;
-        let files = unwrap_ok_or!(files, e, {
-            yield Err(e);
-            return;
-        });
-        let files = files.map(move |f| FileMeta::from((f, name)));
+    let mut next_page_token: Option<String> = None;
 
-        for f in files { yield Ok(f); }
+    try_stream! {
+        loop {
+            let res: Res = api::res::files::list(name, parent_id, next_page_token.as_deref()).await?.into();
+            let res = res.json::<ListResponse>().await?;
+
+            for f in res.files.into_iter() {
+                yield FileMeta::from((f, name));
+            }
+
+            match res.next_page_token {
+                None => break,
+                Some(t) => next_page_token = Some(t),
+            };
+        }
     }
 }
