@@ -1,9 +1,13 @@
-use async_stream::stream;
+use anyhow::Context;
+use async_stream::{stream, try_stream};
 use futures::Stream;
-use std::path;
-use tokio::io::{AsyncRead, AsyncWrite};
+use std::{path, pin::Pin};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
 use super::file_source::local;
+
+type DynAsyncRead = Pin<Box<dyn AsyncRead + Send>>;
+type DynAsyncWrite = Pin<Box<dyn AsyncWrite + Send>>;
 
 #[cfg(feature = "google_drive")]
 use super::file_source::google_drive as gd_fs;
@@ -41,19 +45,23 @@ pub fn list_meta(id: &FileId) -> impl Stream<Item = anyhow::Result<FileMeta>> + 
     }
 }
 
-pub async fn read(id: &FileId) -> anyhow::Result<impl AsyncRead> {
+pub async fn read(id: &FileId) -> anyhow::Result<DynAsyncRead> {
     let FileId(source, id) = id;
     match source {
-        FileSource::Local => local::read(path::Path::new(id)).await,
+        FileSource::Local => local::read(path::Path::new(id))
+            .await
+            .map(|r| -> DynAsyncRead { Box::pin(r) }),
         #[cfg(feature = "google_drive")]
         FileSource::GoogleDrive(_) => unimplemented!(),
     }
 }
 
-pub async fn write(id: &FileId, overwrite: bool) -> anyhow::Result<impl AsyncWrite> {
+pub async fn write(id: &FileId, overwrite: bool) -> anyhow::Result<DynAsyncWrite> {
     let FileId(source, id) = id;
     match source {
-        FileSource::Local => local::write(path::Path::new(id), overwrite).await,
+        FileSource::Local => local::write(path::Path::new(id), overwrite)
+            .await
+            .map(|w| -> DynAsyncWrite { Box::pin(w) }),
         #[cfg(feature = "google_drive")]
         FileSource::GoogleDrive(_) => unimplemented!(),
     }
@@ -127,5 +135,45 @@ pub async fn get_mime(file: &FileId) -> anyhow::Result<String> {
         FileSource::Local => local::get_mime(path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
         FileSource::GoogleDrive(_) => unimplemented!(),
+    }
+}
+
+pub fn copy_file<'a>(
+    src: &'a FileId,
+    dst_dir: &'a FileId,
+    name: &'a str,
+) -> impl Stream<Item = anyhow::Result<u64>> + 'a {
+    try_stream! {
+        let dst = create_file(name, dst_dir).await?;
+        let (rd, wr) = futures::future::try_join(read(src), write(&dst, true)).await?;
+
+        let mut reader = BufReader::new(rd);
+        let mut writer = BufWriter::new(wr);
+
+        let mut buf = vec![0u8; 10_000_000];
+
+        loop {
+            let bytes = async {
+                let bytes = reader
+                    .read(&mut buf)
+                    .await
+                    .with_context(|| format!("Error while reading file {}", name))?;
+
+                writer
+                    .write_all(&buf[..bytes])
+                    .await
+                    .with_context(|| format!("Error while writing to file {}", name))?;
+
+                anyhow::Ok(bytes)
+            }
+            .await?;
+
+            if bytes == 0 {
+                break;
+            }
+
+            yield bytes as u64;
+        }
+        writer.flush().await?;
     }
 }
