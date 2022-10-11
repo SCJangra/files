@@ -1,8 +1,6 @@
 use super::*;
-use anyhow::Context;
 use fievar::Fields;
-use reqwest::{Response, StatusCode};
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::Deserialize;
 
 const FOLDER: &str = "application/vnd.google-apps.folder";
 
@@ -37,33 +35,6 @@ pub struct DriveFile {
 pub struct ListResponse {
     pub next_page_token: Option<String>,
     pub files: Vec<DriveFile>,
-}
-
-pub struct Res(Response);
-
-impl Res {
-    pub async fn json<T: DeserializeOwned>(self) -> anyhow::Result<T> {
-        let res = self.0;
-        let status = res.status();
-
-        if status != StatusCode::OK {
-            let text = res.text().await.with_context(|| "Could not get response")?;
-            return Err(anyhow::anyhow!("GoogleAPIError {} {}", status, text));
-        }
-
-        let bytes = res
-            .bytes()
-            .await
-            .with_context(|| "Could not get response")?;
-        let t = serde_json::from_slice::<T>(&bytes)?;
-        Ok(t)
-    }
-}
-
-impl From<Response> for Res {
-    fn from(r: Response) -> Self {
-        Self(r)
-    }
 }
 
 impl From<(DriveFile, &str)> for FileMeta {

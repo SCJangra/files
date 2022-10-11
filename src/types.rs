@@ -33,25 +33,3 @@ pub enum FileSource {
     #[cfg(feature = "google_drive")]
     GoogleDrive(String),
 }
-
-#[derive(Debug, Clone, Default)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Progress {
-    pub total: u64,
-    pub done: u64,
-}
-
-#[derive(Debug, Clone, Default)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct CopyFileProg {
-    pub name: String,
-    pub prog: Progress,
-}
-
-#[derive(Debug, Clone, Default)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct CopyProg {
-    pub files: Progress,
-    pub size: Progress,
-    pub current: CopyFileProg,
-}

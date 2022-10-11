@@ -19,7 +19,7 @@ async fn refresh_token(
     client_secret: &str,
     refresh_token: &str,
 ) -> anyhow::Result<RefreshToken> {
-    let res: Res = HTTP
+    let t = HTTP
         .post(TOKEN_URI)
         .form(&[
             ("client_id", client_id),
@@ -30,8 +30,10 @@ async fn refresh_token(
         .send()
         .await
         .with_context(|| format!("Could not send post request to '{}'", TOKEN_URI))?
-        .into();
-    res.json::<RefreshToken>().await
+        .json::<RefreshToken>()
+        .await?;
+
+    Ok(t)
 }
 
 pub async fn get_tokne(name: &str) -> anyhow::Result<String> {
