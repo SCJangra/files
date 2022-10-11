@@ -56,3 +56,35 @@ pub async fn list(
         .await
         .with_context(|| format!("Could not send GET request to `{}`", RES_URI))
 }
+
+pub async fn create(
+    name: &str,
+    file_name: &str,
+    parent_id: &str,
+    upload_type: Option<&str>,
+) -> anyhow::Result<Response> {
+    let token = get_tokne(name).await?;
+
+    let req = match upload_type {
+        None => HTTP.post(RES_URI),
+        Some(u) => HTTP.post(RES_URI).query(&[("uploadType", u)]),
+    };
+
+    req.header("Authorization", format!("Bearer {}", token))
+        .json(&serde_json::json!({
+            "name": file_name,
+            "parent_id": parent_id,
+        }))
+        .send()
+        .await
+        .with_context(|| format!("Could not send POST request to `{}`", RES_URI))
+}
+
+pub async fn delete(name: &str, id: &str) -> anyhow::Result<Response> {
+    let token = get_tokne(name).await?;
+    HTTP.delete(format!("{RES_URI}/{id}"))
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .with_context(|| format!("Could not send DELETE request to `{RES_URI}/{id}`"))
+}
