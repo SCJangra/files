@@ -1,6 +1,3 @@
-#[cfg(feature = "google_drive")]
-pub mod google_drive;
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 

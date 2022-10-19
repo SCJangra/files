@@ -4,22 +4,20 @@ use futures::Stream;
 use std::{path, pin::Pin};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
-use super::file_source::local;
+#[cfg(feature = "google_drive")]
+use crate::google_drive::api as gd;
+
+use crate::{local::api as local, types::*};
 
 type DynAsyncRead = Pin<Box<dyn AsyncRead + Send>>;
 type DynAsyncWrite = Pin<Box<dyn AsyncWrite + Send>>;
-
-#[cfg(feature = "google_drive")]
-use super::file_source::google_drive as gd_fs;
-
-use super::types::*;
 
 pub async fn get_meta(id: &FileId) -> anyhow::Result<FileMeta> {
     let FileId(source, id) = id;
     match source {
         FileSource::Local => local::get_meta(path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(name) => gd_fs::get_meta(name, id).await,
+        FileSource::GoogleDrive(name) => gd::get_meta(name, id).await,
     }
 }
 
@@ -36,7 +34,7 @@ pub fn list_meta(id: &FileId) -> impl Stream<Item = anyhow::Result<FileMeta>> + 
             }
             #[cfg(feature = "google_drive")]
             FileSource::GoogleDrive(name) => {
-                let s = gd_fs::list_meta(name, id);
+                let s = gd::list_meta(name, id);
                 for await v in s {
                     yield v;
                 }
@@ -52,7 +50,7 @@ pub async fn read(id: &FileId) -> anyhow::Result<DynAsyncRead> {
             .await
             .map(|r| -> DynAsyncRead { Box::pin(r) }),
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(name) => gd_fs::read(name, id)
+        FileSource::GoogleDrive(name) => gd::read(name, id)
             .await
             .map(|r| -> DynAsyncRead { Box::pin(r) }),
     }

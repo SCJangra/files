@@ -1,14 +1,15 @@
-mod api;
+use crate::{
+    google_drive::{res, types::*, CONFIGS},
+    types::*,
+};
 
-use crate::types::{google_drive::*, *};
-pub use api::oauth::CONFIGS;
 use async_stream::try_stream;
 use futures::{Stream, TryStreamExt};
 use tokio::io::AsyncRead;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 pub async fn get_meta(name: &str, id: &str) -> anyhow::Result<FileMeta> {
-    let m = api::res::files::get(name, id, false)
+    let m = res::files::get(name, id, false)
         .await?
         .json::<DriveFile>()
         .await?;
@@ -17,7 +18,7 @@ pub async fn get_meta(name: &str, id: &str) -> anyhow::Result<FileMeta> {
 }
 
 pub async fn read(name: &str, id: &str) -> anyhow::Result<impl AsyncRead> {
-    let s = api::res::files::get(name, id, true)
+    let s = res::files::get(name, id, true)
         .await?
         .bytes_stream()
         .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
@@ -34,7 +35,7 @@ pub fn list_meta<'a>(
 
     try_stream! {
         loop {
-            let res = api::res::files::list(name, parent_id, next_page_token.as_deref())
+            let res = res::files::list(name, parent_id, next_page_token.as_deref())
                 .await?
                 .json::<ListResponse>()
                 .await?;
@@ -49,4 +50,22 @@ pub fn list_meta<'a>(
             };
         }
     }
+}
+
+pub async fn add_config(
+    name: String,
+    client_id: String,
+    client_secret: String,
+    refresh_token: String,
+) {
+    CONFIGS.write().await.insert(
+        name,
+        Config {
+            client_id,
+            client_secret,
+            refresh_token,
+            access_token: "".into(),
+            expires_at: 0,
+        },
+    );
 }
