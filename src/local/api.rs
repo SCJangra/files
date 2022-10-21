@@ -76,26 +76,14 @@ pub async fn read(path: &path::Path) -> anyhow::Result<impl AsyncRead> {
     Ok(file)
 }
 
-pub async fn write(path: &path::Path, overwrite: bool) -> anyhow::Result<impl AsyncWrite> {
-    let file = if overwrite {
-        fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(path)
-            .await
-    } else {
-        fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(path)
-            .await
-    };
-
-    let file =
-        file.with_context(|| format!("Could not write to file '{}'", path.to_string_lossy()))?;
-
-    Ok(file)
+pub async fn write(path: &path::Path) -> anyhow::Result<impl AsyncWrite> {
+    fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .await
+        .with_context(|| format!("Could not write to file '{}'", path.to_string_lossy()))
 }
 
 pub async fn create_file(name: &str, dir: &path::Path) -> anyhow::Result<FileId> {

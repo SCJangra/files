@@ -56,10 +56,10 @@ pub async fn read(id: &FileId) -> anyhow::Result<DynAsyncRead> {
     }
 }
 
-pub async fn write(id: &FileId, overwrite: bool) -> anyhow::Result<DynAsyncWrite> {
+pub async fn write(id: &FileId) -> anyhow::Result<DynAsyncWrite> {
     let FileId(source, id) = id;
     match source {
-        FileSource::Local => local::write(path::Path::new(id), overwrite)
+        FileSource::Local => local::write(path::Path::new(id))
             .await
             .map(|w| -> DynAsyncWrite { Box::pin(w) }),
         #[cfg(feature = "google_drive")]
@@ -145,7 +145,7 @@ pub fn copy_file<'a>(
 ) -> impl Stream<Item = anyhow::Result<u64>> + 'a {
     try_stream! {
         let dst = create_file(name, dst_dir).await?;
-        let (rd, wr) = futures::future::try_join(read(src), write(&dst, true)).await?;
+        let (rd, wr) = futures::future::try_join(read(src), write(&dst)).await?;
 
         let mut reader = BufReader::new(rd);
         let mut writer = BufWriter::new(wr);
