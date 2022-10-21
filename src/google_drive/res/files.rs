@@ -4,6 +4,7 @@ use reqwest::Response;
 use crate::google_drive::{oauth::*, types::*, HTTP};
 
 const RES_URI: &str = "https://www.googleapis.com/drive/v3/files";
+const UPLOAD_URI: &str = "https://www.googleapis.com/upload/drive/v3/files";
 
 lazy_static::lazy_static! {
     static ref GET_FIELDS: String = DriveFile::fields().join(",");
@@ -60,9 +61,16 @@ pub async fn create(
     parent_id: &str,
     upload_type: Option<&str>,
 ) -> anyhow::Result<Response> {
+    let url;
     let req = match upload_type {
-        None => HTTP.post(RES_URI),
-        Some(u) => HTTP.post(RES_URI).query(&[("uploadType", u)]),
+        None => {
+            url = RES_URI;
+            HTTP.post(RES_URI)
+        }
+        Some(u) => {
+            url = UPLOAD_URI;
+            HTTP.post(UPLOAD_URI).query(&[("uploadType", u)])
+        }
     };
 
     req.header("Authorization", &get_auth_header(name).await?)
