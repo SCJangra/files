@@ -90,7 +90,7 @@ pub async fn create_file(name: &str, dir: &path::Path) -> anyhow::Result<FileId>
     let mut path = dir.to_path_buf();
     path.push(name);
 
-    write(path.as_path(), false).await?;
+    write(path.as_path()).await?;
 
     let id = FileId(FileSource::Local, path.to_string_lossy().to_string());
 

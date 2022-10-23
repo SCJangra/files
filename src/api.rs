@@ -72,7 +72,7 @@ pub async fn create_file(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
     match source {
         FileSource::Local => local::create_file(name, path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(c) => gd::create_file(c, name, id).await,
     }
 }
 
@@ -81,7 +81,7 @@ pub async fn create_dir(name: &str, dir: &FileId) -> anyhow::Result<FileId> {
     match source {
         FileSource::Local => local::create_dir(name, path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(c) => gd::create_dir(c, name, id).await,
     }
 }
 
@@ -90,7 +90,7 @@ pub async fn rename(id: &FileId, new_name: &str) -> anyhow::Result<FileId> {
     match source {
         FileSource::Local => local::rename(path::Path::new(id), new_name).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(c) => gd::rename(c, id, new_name).await,
     }
 }
 

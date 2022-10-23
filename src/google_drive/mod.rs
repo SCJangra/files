@@ -2,7 +2,6 @@ pub mod api;
 pub mod types;
 
 mod oauth;
-mod res;
 
 use std::collections::HashMap;
 
