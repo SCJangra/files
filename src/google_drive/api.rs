@@ -129,6 +129,45 @@ pub async fn rename(config_name: &str, id: &str, new_name: &str) -> anyhow::Resu
     Ok(id)
 }
 
+pub async fn mv(config_name: &str, id: &str, new_parent: &str) -> anyhow::Result<FileId> {
+    let f = HTTP
+        .patch(&format!("{RES_URI}/{id}"))
+        .query(&[("addParents", new_parent)])
+        .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
+        .json("{}")
+        .send()
+        .await?
+        .json::<DriveFile>()
+        .await?;
+
+    let id = FileId(FileSource::GoogleDrive(config_name.into()), f.id);
+    Ok(id)
+}
+
+pub async fn delete(config_name: &str, id: &str) -> anyhow::Result<()> {
+    HTTP.delete(&format!("{RES_URI}/{id}"))
+        .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
+        .send()
+        .await?
+        .error_for_status()
+        .map_err(anyhow::Error::new)
+        .map(|_r| ())
+}
+
+pub async fn get_mime(config_name: &str, id: &str) -> anyhow::Result<String> {
+    let f = HTTP
+        .get(&format!("{RES_URI}/{id}"))
+        .query(&[("fields", GET_FIELDS.as_str())])
+        .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<DriveFile>()
+        .await?;
+
+    Ok(f.mime_type)
+}
+
 pub async fn add_config(
     name: String,
     client_id: String,

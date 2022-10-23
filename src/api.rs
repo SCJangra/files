@@ -101,31 +101,37 @@ pub async fn mv(file: &FileId, dir: &FileId) -> anyhow::Result<FileId> {
         }
 
         #[cfg(feature = "google_drive")]
-        (FileSource::Local, FileSource::GoogleDrive(_)) => unimplemented!(),
+        (FileSource::GoogleDrive(current_owner), FileSource::GoogleDrive(new_owner)) => {
+            match current_owner == new_owner {
+                true => gd::mv(current_owner, &file.1, &dir.1).await,
+                false => Err(anyhow::anyhow!(
+                    "moving google drive files across acounts is currently not supported"
+                )),
+            }
+        }
 
-        #[cfg(feature = "google_drive")]
-        (FileSource::GoogleDrive(_), FileSource::Local) => unimplemented!(),
-
-        #[cfg(feature = "google_drive")]
-        (FileSource::GoogleDrive(_), FileSource::GoogleDrive(_)) => unimplemented!(),
+        #[allow(unreachable_patterns)]
+        _ => Err(anyhow::anyhow!(
+            "moving files across file sources is currently not supported"
+        )),
     }
 }
 
-pub async fn delete_file(file: &FileId) -> anyhow::Result<bool> {
+pub async fn delete_file(file: &FileId) -> anyhow::Result<()> {
     let FileId(source, id) = file;
     match source {
         FileSource::Local => local::delete_file(path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(c) => gd::delete(c, id).await,
     }
 }
 
-pub async fn delete_dir(dir: &FileId) -> anyhow::Result<bool> {
+pub async fn delete_dir(dir: &FileId) -> anyhow::Result<()> {
     let FileId(source, id) = dir;
     match source {
         FileSource::Local => local::delete_dir(path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(c) => gd::delete(c, id).await,
     }
 }
 
@@ -134,7 +140,7 @@ pub async fn get_mime(file: &FileId) -> anyhow::Result<String> {
     match source {
         FileSource::Local => local::get_mime(path::Path::new(id)).await,
         #[cfg(feature = "google_drive")]
-        FileSource::GoogleDrive(_) => unimplemented!(),
+        FileSource::GoogleDrive(c) => gd::get_mime(c, id).await,
     }
 }
 

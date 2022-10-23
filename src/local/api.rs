@@ -158,18 +158,16 @@ pub async fn mv(file: &path::Path, dir: &path::Path) -> anyhow::Result<FileId> {
     Ok(id)
 }
 
-pub async fn delete_file(file: &path::Path) -> anyhow::Result<bool> {
+pub async fn delete_file(file: &path::Path) -> anyhow::Result<()> {
     fs::remove_file(file)
         .await
-        .with_context(|| format!("Could not delete file '{}'", file.to_string_lossy()))?;
-    Ok(true)
+        .with_context(|| format!("Could not delete file '{}'", file.to_string_lossy()))
 }
 
-pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<bool> {
+pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<()> {
     fs::remove_dir(dir)
         .await
-        .with_context(|| format!("Could not delete directory '{}'", dir.to_string_lossy()))?;
-    Ok(true)
+        .with_context(|| format!("Could not delete directory '{}'", dir.to_string_lossy()))
 }
 
 pub async fn get_mime(file: &path::Path) -> anyhow::Result<String> {
