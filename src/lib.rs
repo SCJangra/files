@@ -1,9 +1,7 @@
-mod api;
 mod local;
+mod types;
 
 #[cfg(feature = "google_drive")]
 mod google_drive;
 
-pub mod types;
-
-pub use api::*;
+pub use types::*;

@@ -1,4 +1,4 @@
-use crate::types::*;
+use crate::*;
 
 use anyhow::Context;
 use async_stream::stream;
@@ -12,7 +12,7 @@ use tokio::{
 use tokio_stream::wrappers as tsw;
 use unwrap_or::unwrap_ok_or;
 
-pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
+pub async fn get_meta(path: &path::Path) -> anyhow::Result<File> {
     let id = path.to_string_lossy().to_string();
     let parent_id = path
         .parent()
@@ -39,7 +39,7 @@ pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
 
     let id = FileId(FileSource::Local, id);
 
-    Ok(FileMeta {
+    Ok(File {
         name,
         id,
         file_type,
@@ -48,7 +48,7 @@ pub async fn get_meta(path: &path::Path) -> anyhow::Result<FileMeta> {
     })
 }
 
-pub fn list_meta(path: &path::Path) -> impl Stream<Item = anyhow::Result<FileMeta>> + '_ {
+pub fn list_meta(path: &path::Path) -> impl Stream<Item = anyhow::Result<File>> + '_ {
     stream! {
         let id = path.to_string_lossy().to_string();
         let rd = fs::read_dir(path)
@@ -86,33 +86,29 @@ pub async fn write(path: &path::Path) -> anyhow::Result<impl AsyncWrite> {
         .with_context(|| format!("Could not write to file '{}'", path.to_string_lossy()))
 }
 
-pub async fn create_file(name: &str, dir: &path::Path) -> anyhow::Result<FileId> {
-    let mut path = dir.to_path_buf();
-    path.push(name);
+pub async fn create_file(name: &str, parent: &path::Path) -> anyhow::Result<File> {
+    let mut pb = parent.to_path_buf();
+    pb.push(name);
 
-    write(path.as_path()).await?;
+    fs::File::create(pb.as_path()).await?;
 
-    let id = FileId(FileSource::Local, path.to_string_lossy().to_string());
+    let m = get_meta(pb.as_path()).await?;
 
-    Ok(id)
+    Ok(m)
 }
 
-pub async fn create_dir(name: &str, dir: &path::Path) -> anyhow::Result<FileId> {
-    let mut path = dir.to_path_buf();
-    path.push(name);
+pub async fn create_dir(name: &str, parent: &path::Path) -> anyhow::Result<File> {
+    let mut pb = parent.to_path_buf();
+    pb.push(name);
 
-    let id = path.to_string_lossy().to_string();
+    fs::create_dir(pb.as_path()).await?;
 
-    fs::create_dir(path)
-        .await
-        .with_context(|| format!("Could not create directory '{}'", id))?;
+    let m = get_meta(pb.as_path()).await?;
 
-    let id = FileId(FileSource::Local, id);
-
-    Ok(id)
+    Ok(m)
 }
 
-pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<FileId> {
+pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<()> {
     let mut path = path::PathBuf::from(file);
     path.set_file_name(new_name);
 
@@ -125,14 +121,10 @@ pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<FileId>
 
     fs::rename(file, path.as_path())
         .await
-        .with_context(|| format!("Could not rename file '{}'", file.to_string_lossy()))?;
-
-    let id = FileId(FileSource::Local, path.to_string_lossy().to_string());
-
-    Ok(id)
+        .with_context(|| format!("Could not rename file '{}'", file.to_string_lossy()))
 }
 
-pub async fn mv(file: &path::Path, dir: &path::Path) -> anyhow::Result<FileId> {
+pub async fn mv(file: &path::Path, dir: &path::Path) -> anyhow::Result<()> {
     let mut dir_pb = path::PathBuf::from(dir);
     let name = match file.file_name() {
         Some(n) => n,
@@ -154,8 +146,7 @@ pub async fn mv(file: &path::Path, dir: &path::Path) -> anyhow::Result<FileId> {
         )
     })?;
 
-    let id = FileId(FileSource::Local, p);
-    Ok(id)
+    Ok(())
 }
 
 pub async fn delete_file(file: &path::Path) -> anyhow::Result<()> {

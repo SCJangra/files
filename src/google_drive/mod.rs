@@ -1,14 +1,15 @@
-pub mod api;
-pub mod types;
-
+mod api;
 mod oauth;
+mod types;
+mod utils;
 
 use std::collections::HashMap;
 
 use reqwest::Client;
 use tokio::sync::RwLock;
 
-use types::Config;
+pub use api::*;
+pub use types::*;
 
 lazy_static::lazy_static! {
     pub static ref CONFIGS: RwLock<HashMap<String, Config>> = RwLock::new(HashMap::<String, Config>::new());

@@ -1,25 +1,25 @@
 use crate::{
     google_drive::{types::*, CONFIGS},
-    types::*,
+    *,
 };
 
 use async_stream::try_stream;
 use futures::{Stream, TryStreamExt};
 use reqwest::{header::*, Response};
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 use super::{oauth, HTTP};
 
-const RES_URI: &str = "https://www.googleapis.com/drive/v3/files";
-const _UPLOAD_URI: &str = "https://www.googleapis.com/upload/drive/v3/files";
+pub const RES_URI: &str = "https://www.googleapis.com/drive/v3/files";
+pub const UPLOAD_URI: &str = "https://www.googleapis.com/upload/drive/v3/files";
 
 lazy_static::lazy_static! {
     static ref GET_FIELDS: String = DriveFile::fields().join(",");
     static ref LIST_FIELDS: String = format!("files({})", GET_FIELDS.as_str());
 }
 
-pub async fn get_meta(config_name: &str, id: &str) -> anyhow::Result<FileMeta> {
+pub async fn get_meta(config_name: &str, id: &str) -> anyhow::Result<File> {
     let f = HTTP
         .get(&format!("{RES_URI}/{id}"))
         .query(&[("fields", GET_FIELDS.as_str())])
@@ -47,10 +47,27 @@ pub async fn read(config_name: &str, id: &str) -> anyhow::Result<impl AsyncRead>
     Ok(s)
 }
 
+pub async fn write<'a>(config_name: &'a str, id: &'a str) -> anyhow::Result<impl AsyncWrite + 'a> {
+    let upload_url = HTTP
+        .patch(&format!("{UPLOAD_URI}/{id}"))
+        .query(&[("uploadType", "resumable")])
+        .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
+        .send()
+        .await?
+        .error_for_status()?
+        .headers()
+        .get(LOCATION)
+        .ok_or_else(|| anyhow::anyhow!("unexpected response with no `Location` header"))?
+        .to_str()?
+        .to_owned();
+
+    Ok(Upload::new(upload_url, config_name))
+}
+
 pub fn list_meta<'a>(
     config_name: &'a str,
     parent_id: &'a str,
-) -> impl Stream<Item = anyhow::Result<FileMeta>> + 'a {
+) -> impl Stream<Item = anyhow::Result<File>> + 'a {
     let mut next_page_token: Option<String> = None;
 
     try_stream! {
@@ -61,7 +78,7 @@ pub fn list_meta<'a>(
                 .await?;
 
             for f in res.files.into_iter() {
-                yield FileMeta::from((f, config_name));
+                yield File::from((f, config_name));
             }
 
             match res.next_page_token {
@@ -76,7 +93,7 @@ pub async fn create_file(
     config_name: &str,
     file_name: &str,
     parent_dir: &str,
-) -> anyhow::Result<FileId> {
+) -> anyhow::Result<File> {
     let f = HTTP
         .post(RES_URI)
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
@@ -89,15 +106,14 @@ pub async fn create_file(
         .json::<DriveFile>()
         .await?;
 
-    let id = FileId(FileSource::GoogleDrive(config_name.into()), f.id);
-    Ok(id)
+    Ok((f, config_name).into())
 }
 
 pub async fn create_dir(
     config_name: &str,
     dir_name: &str,
     parent_dir: &str,
-) -> anyhow::Result<FileId> {
+) -> anyhow::Result<File> {
     let f = HTTP
         .post(RES_URI)
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
@@ -111,37 +127,30 @@ pub async fn create_dir(
         .json::<DriveFile>()
         .await?;
 
-    let id = FileId(FileSource::GoogleDrive(config_name.into()), f.id);
-    Ok(id)
+    Ok((f, config_name).into())
 }
 
-pub async fn rename(config_name: &str, id: &str, new_name: &str) -> anyhow::Result<FileId> {
-    let f = HTTP
-        .patch(&format!("{RES_URI}/{id}"))
+pub async fn rename(config_name: &str, id: &str, new_name: &str) -> anyhow::Result<()> {
+    HTTP.patch(&format!("{RES_URI}/{id}"))
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
         .json(&serde_json::json!({ "name": new_name }))
         .send()
         .await?
-        .json::<DriveFile>()
-        .await?;
-
-    let id = FileId(FileSource::GoogleDrive(config_name.into()), f.id);
-    Ok(id)
+        .error_for_status()
+        .map(|_r| ())
+        .map_err(anyhow::Error::new)
 }
 
-pub async fn mv(config_name: &str, id: &str, new_parent: &str) -> anyhow::Result<FileId> {
-    let f = HTTP
-        .patch(&format!("{RES_URI}/{id}"))
+pub async fn mv(config_name: &str, id: &str, new_parent: &str) -> anyhow::Result<()> {
+    HTTP.patch(&format!("{RES_URI}/{id}"))
         .query(&[("addParents", new_parent)])
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
         .json("{}")
         .send()
         .await?
-        .json::<DriveFile>()
-        .await?;
-
-    let id = FileId(FileSource::GoogleDrive(config_name.into()), f.id);
-    Ok(id)
+        .error_for_status()
+        .map(|_r| ())
+        .map_err(anyhow::Error::new)
 }
 
 pub async fn delete(config_name: &str, id: &str) -> anyhow::Result<()> {

@@ -1,15 +1,12 @@
+mod file;
+mod reader;
+mod writer;
+pub use file::File;
+pub use reader::Reader;
+pub use writer::Writer;
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct FileMeta {
-    pub name: String,
-    pub file_type: FileType,
-    pub size: u64,
-    pub id: FileId,
-    pub parent_id: Option<FileId>,
-}
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
