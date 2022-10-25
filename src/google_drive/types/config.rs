@@ -1,6 +1,6 @@
 use std::time::{Duration, UNIX_EPOCH};
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use super::RefreshToken;
@@ -17,7 +17,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn is_valid(&self) -> anyhow::Result<bool> {
+    pub fn is_valid(&self) -> Result<bool> {
         let now = UNIX_EPOCH
             .elapsed()
             .with_context(|| "Time went backwards!")?;
@@ -27,7 +27,7 @@ impl Config {
         Ok(now < exp)
     }
 
-    pub async fn refresh(&mut self) -> anyhow::Result<()> {
+    pub async fn refresh(&mut self) -> Result<()> {
         let token = crate::google_drive::HTTP
             .post(TOKEN_URI)
             .form(&[

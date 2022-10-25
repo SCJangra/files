@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use anyhow::Result;
 use async_stream::{stream, try_stream};
 use futures::Stream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -26,7 +27,7 @@ use FileSource as FS;
 use FileType as FT;
 
 impl File {
-    pub async fn new(file_type: &FileType, name: &str, parent_id: &FileId) -> anyhow::Result<Self> {
+    pub async fn new(file_type: &FileType, name: &str, parent_id: &FileId) -> Result<Self> {
         let FileId(source, parent_id) = parent_id;
 
         match (source, file_type) {
@@ -44,7 +45,7 @@ impl File {
         }
     }
 
-    pub async fn get(id: &FileId) -> anyhow::Result<File> {
+    pub async fn get(id: &FileId) -> Result<File> {
         let FileId(source, id) = id;
         match source {
             FS::Local => local::get_meta(Path::new(id)).await,
@@ -53,7 +54,7 @@ impl File {
         }
     }
 
-    pub async fn rename(&mut self, new_name: &str) -> anyhow::Result<()> {
+    pub async fn rename(&mut self, new_name: &str) -> Result<()> {
         let FileId(source, id) = &self.id;
 
         match source {
@@ -66,7 +67,7 @@ impl File {
         Ok(())
     }
 
-    pub async fn move_to_dir(&mut self, dir_id: &FileId) -> anyhow::Result<()> {
+    pub async fn move_to_dir(&mut self, dir_id: &FileId) -> Result<()> {
         match (&self.id.0, &dir_id.0) {
             (FS::Local, FS::Local) => {
                 local::mv(Path::new(&self.id.1), Path::new(&dir_id.1)).await?
@@ -96,7 +97,7 @@ impl File {
         Ok(())
     }
 
-    pub async fn delete(self) -> anyhow::Result<()> {
+    pub async fn delete(self) -> Result<()> {
         let FileId(source, id) = &self.id;
 
         match source {
@@ -109,7 +110,7 @@ impl File {
         }
     }
 
-    pub async fn mime(&self) -> anyhow::Result<String> {
+    pub async fn mime(&self) -> Result<String> {
         let FileId(source, id) = &self.id;
         match source {
             FileSource::Local => local::get_mime(Path::new(id)).await,
@@ -118,15 +119,15 @@ impl File {
         }
     }
 
-    pub async fn reader(&self) -> anyhow::Result<Reader> {
+    pub async fn reader(&self) -> Result<Reader> {
         Reader::new(self).await
     }
 
-    pub async fn writer(&mut self) -> anyhow::Result<Writer> {
+    pub async fn writer(&mut self) -> Result<Writer> {
         Writer::new(self).await
     }
 
-    pub fn list(&self) -> impl Stream<Item = anyhow::Result<File>> + '_ {
+    pub fn list(&self) -> impl Stream<Item = Result<File>> + '_ {
         let FileId(source, id) = &self.id;
 
         stream! {
@@ -148,10 +149,7 @@ impl File {
         }
     }
 
-    pub fn copy_to_dir<'a>(
-        &'a self,
-        dir_id: &'a FileId,
-    ) -> impl Stream<Item = anyhow::Result<u64>> + 'a {
+    pub fn copy_to_dir<'a>(&'a self, dir_id: &'a FileId) -> impl Stream<Item = Result<u64>> + 'a {
         try_stream! {
             let mut f = Self::new(&FileType::File, &self.name, dir_id).await?;
             let (r, w) = futures::future::try_join(self.reader(), f.writer()).await?;

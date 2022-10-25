@@ -3,6 +3,7 @@ use crate::{
     *,
 };
 
+use anyhow::Result;
 use async_stream::try_stream;
 use futures::{Stream, TryStreamExt};
 use reqwest::{header::*, Response};
@@ -19,7 +20,7 @@ lazy_static::lazy_static! {
     static ref LIST_FIELDS: String = format!("files({})", GET_FIELDS.as_str());
 }
 
-pub async fn get_meta(config_name: &str, id: &str) -> anyhow::Result<File> {
+pub async fn get_meta(config_name: &str, id: &str) -> Result<File> {
     let f = HTTP
         .get(&format!("{RES_URI}/{id}"))
         .query(&[("fields", GET_FIELDS.as_str())])
@@ -32,7 +33,7 @@ pub async fn get_meta(config_name: &str, id: &str) -> anyhow::Result<File> {
     Ok((f, config_name).into())
 }
 
-pub async fn read(config_name: &str, id: &str) -> anyhow::Result<impl AsyncRead> {
+pub async fn read(config_name: &str, id: &str) -> Result<impl AsyncRead> {
     let s = HTTP
         .get(&format!("{RES_URI}/{id}"))
         .query(&[("alt", "media")])
@@ -47,7 +48,7 @@ pub async fn read(config_name: &str, id: &str) -> anyhow::Result<impl AsyncRead>
     Ok(s)
 }
 
-pub async fn write<'a>(config_name: &'a str, id: &'a str) -> anyhow::Result<impl AsyncWrite + 'a> {
+pub async fn write<'a>(config_name: &'a str, id: &'a str) -> Result<impl AsyncWrite + 'a> {
     let upload_url = HTTP
         .patch(&format!("{UPLOAD_URI}/{id}"))
         .query(&[("uploadType", "resumable")])
@@ -67,7 +68,7 @@ pub async fn write<'a>(config_name: &'a str, id: &'a str) -> anyhow::Result<impl
 pub fn list_meta<'a>(
     config_name: &'a str,
     parent_id: &'a str,
-) -> impl Stream<Item = anyhow::Result<File>> + 'a {
+) -> impl Stream<Item = Result<File>> + 'a {
     let mut next_page_token: Option<String> = None;
 
     try_stream! {
@@ -89,11 +90,7 @@ pub fn list_meta<'a>(
     }
 }
 
-pub async fn create_file(
-    config_name: &str,
-    file_name: &str,
-    parent_dir: &str,
-) -> anyhow::Result<File> {
+pub async fn create_file(config_name: &str, file_name: &str, parent_dir: &str) -> Result<File> {
     let f = HTTP
         .post(RES_URI)
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
@@ -109,11 +106,7 @@ pub async fn create_file(
     Ok((f, config_name).into())
 }
 
-pub async fn create_dir(
-    config_name: &str,
-    dir_name: &str,
-    parent_dir: &str,
-) -> anyhow::Result<File> {
+pub async fn create_dir(config_name: &str, dir_name: &str, parent_dir: &str) -> Result<File> {
     let f = HTTP
         .post(RES_URI)
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
@@ -130,7 +123,7 @@ pub async fn create_dir(
     Ok((f, config_name).into())
 }
 
-pub async fn rename(config_name: &str, id: &str, new_name: &str) -> anyhow::Result<()> {
+pub async fn rename(config_name: &str, id: &str, new_name: &str) -> Result<()> {
     HTTP.patch(&format!("{RES_URI}/{id}"))
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
         .json(&serde_json::json!({ "name": new_name }))
@@ -141,7 +134,7 @@ pub async fn rename(config_name: &str, id: &str, new_name: &str) -> anyhow::Resu
         .map_err(anyhow::Error::new)
 }
 
-pub async fn mv(config_name: &str, id: &str, new_parent: &str) -> anyhow::Result<()> {
+pub async fn mv(config_name: &str, id: &str, new_parent: &str) -> Result<()> {
     HTTP.patch(&format!("{RES_URI}/{id}"))
         .query(&[("addParents", new_parent)])
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
@@ -153,7 +146,7 @@ pub async fn mv(config_name: &str, id: &str, new_parent: &str) -> anyhow::Result
         .map_err(anyhow::Error::new)
 }
 
-pub async fn delete(config_name: &str, id: &str) -> anyhow::Result<()> {
+pub async fn delete(config_name: &str, id: &str) -> Result<()> {
     HTTP.delete(&format!("{RES_URI}/{id}"))
         .header(AUTHORIZATION, &oauth::get_auth_header(config_name).await?)
         .send()
@@ -163,7 +156,7 @@ pub async fn delete(config_name: &str, id: &str) -> anyhow::Result<()> {
         .map(|_r| ())
 }
 
-pub async fn get_mime(config_name: &str, id: &str) -> anyhow::Result<String> {
+pub async fn get_mime(config_name: &str, id: &str) -> Result<String> {
     let f = HTTP
         .get(&format!("{RES_URI}/{id}"))
         .query(&[("fields", GET_FIELDS.as_str())])
@@ -195,7 +188,7 @@ pub async fn add_config(
     );
 }
 
-async fn list(name: &str, parent_id: &str, page_token: Option<&str>) -> anyhow::Result<Response> {
+async fn list(name: &str, parent_id: &str, page_token: Option<&str>) -> Result<Response> {
     let req = HTTP
         .get(RES_URI)
         .header(AUTHORIZATION, &oauth::get_auth_header(name).await?);

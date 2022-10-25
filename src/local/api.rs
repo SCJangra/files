@@ -1,9 +1,8 @@
-use crate::*;
+use std::path;
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use async_stream::stream;
 use futures::{Stream, TryStreamExt};
-use std::path;
 use tokio::{
     fs,
     io::{AsyncRead, AsyncWrite},
@@ -12,7 +11,9 @@ use tokio::{
 use tokio_stream::wrappers as tsw;
 use unwrap_or::unwrap_ok_or;
 
-pub async fn get_meta(path: &path::Path) -> anyhow::Result<File> {
+use crate::*;
+
+pub async fn get_meta(path: &path::Path) -> Result<File> {
     let id = path.to_string_lossy().to_string();
     let parent_id = path
         .parent()
@@ -48,7 +49,7 @@ pub async fn get_meta(path: &path::Path) -> anyhow::Result<File> {
     })
 }
 
-pub fn list_meta(path: &path::Path) -> impl Stream<Item = anyhow::Result<File>> + '_ {
+pub fn list_meta(path: &path::Path) -> impl Stream<Item = Result<File>> + '_ {
     stream! {
         let id = path.to_string_lossy().to_string();
         let rd = fs::read_dir(path)
@@ -68,7 +69,7 @@ pub fn list_meta(path: &path::Path) -> impl Stream<Item = anyhow::Result<File>> 
     }
 }
 
-pub async fn read(path: &path::Path) -> anyhow::Result<impl AsyncRead> {
+pub async fn read(path: &path::Path) -> Result<impl AsyncRead> {
     let file = fs::File::open(path)
         .await
         .with_context(|| format!("Could not read file '{}'", path.to_string_lossy()))?;
@@ -76,7 +77,7 @@ pub async fn read(path: &path::Path) -> anyhow::Result<impl AsyncRead> {
     Ok(file)
 }
 
-pub async fn write(path: &path::Path) -> anyhow::Result<impl AsyncWrite> {
+pub async fn write(path: &path::Path) -> Result<impl AsyncWrite> {
     fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -86,7 +87,7 @@ pub async fn write(path: &path::Path) -> anyhow::Result<impl AsyncWrite> {
         .with_context(|| format!("Could not write to file '{}'", path.to_string_lossy()))
 }
 
-pub async fn create_file(name: &str, parent: &path::Path) -> anyhow::Result<File> {
+pub async fn create_file(name: &str, parent: &path::Path) -> Result<File> {
     let mut pb = parent.to_path_buf();
     pb.push(name);
 
@@ -97,7 +98,7 @@ pub async fn create_file(name: &str, parent: &path::Path) -> anyhow::Result<File
     Ok(m)
 }
 
-pub async fn create_dir(name: &str, parent: &path::Path) -> anyhow::Result<File> {
+pub async fn create_dir(name: &str, parent: &path::Path) -> Result<File> {
     let mut pb = parent.to_path_buf();
     pb.push(name);
 
@@ -108,7 +109,7 @@ pub async fn create_dir(name: &str, parent: &path::Path) -> anyhow::Result<File>
     Ok(m)
 }
 
-pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<()> {
+pub async fn rename(file: &path::Path, new_name: &str) -> Result<()> {
     let mut path = path::PathBuf::from(file);
     path.set_file_name(new_name);
 
@@ -124,7 +125,7 @@ pub async fn rename(file: &path::Path, new_name: &str) -> anyhow::Result<()> {
         .with_context(|| format!("Could not rename file '{}'", file.to_string_lossy()))
 }
 
-pub async fn mv(file: &path::Path, dir: &path::Path) -> anyhow::Result<()> {
+pub async fn mv(file: &path::Path, dir: &path::Path) -> Result<()> {
     let mut dir_pb = path::PathBuf::from(dir);
     let name = match file.file_name() {
         Some(n) => n,
@@ -149,19 +150,19 @@ pub async fn mv(file: &path::Path, dir: &path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn delete_file(file: &path::Path) -> anyhow::Result<()> {
+pub async fn delete_file(file: &path::Path) -> Result<()> {
     fs::remove_file(file)
         .await
         .with_context(|| format!("Could not delete file '{}'", file.to_string_lossy()))
 }
 
-pub async fn delete_dir(dir: &path::Path) -> anyhow::Result<()> {
+pub async fn delete_dir(dir: &path::Path) -> Result<()> {
     fs::remove_dir(dir)
         .await
         .with_context(|| format!("Could not delete directory '{}'", dir.to_string_lossy()))
 }
 
-pub async fn get_mime(file: &path::Path) -> anyhow::Result<String> {
+pub async fn get_mime(file: &path::Path) -> Result<String> {
     let file = file.to_owned();
 
     task::spawn_blocking(move || {

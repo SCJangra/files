@@ -4,13 +4,16 @@ use std::{
     task::{Context, Poll},
 };
 
+use anyhow::Result;
 use futures::{future::BoxFuture, Future, FutureExt};
+use reqwest::header::*;
 use tokio::io::AsyncWrite;
 
-use crate::google_drive::utils::parse_range_header;
-use crate::google_drive::utils::IntoIOErr;
-use crate::google_drive::{oauth::get_auth_header, HTTP};
-use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+use crate::google_drive::{
+    oauth::get_auth_header,
+    utils::{parse_range_header, IntoIOErr},
+    HTTP,
+};
 
 // 512 KB
 const BUF_SIZE: usize = (256 * 1024) * 2;
@@ -27,7 +30,7 @@ enum State<'a> {
     // in this state the buffer is never full
     Buffering,
     // in this state the buffer is always full
-    Uploading(BoxFuture<'a, anyhow::Result<u64>>),
+    Uploading(BoxFuture<'a, Result<u64>>),
 }
 
 impl<'a> Upload<'a> {
@@ -41,14 +44,13 @@ impl<'a> Upload<'a> {
         }
     }
 
-    fn upload(&mut self, size: Option<u64>) -> impl Future<Output = anyhow::Result<u64>> {
+    fn upload(&mut self, size: Option<u64>) -> impl Future<Output = Result<u64>> {
         let upload_url = unsafe { &*std::ptr::addr_of!(*self.upload_url) };
         let config_name = unsafe { &*std::ptr::addr_of!(*self.config_name) };
         let buf = unsafe { &*std::ptr::addr_of!(self.buf) };
         let sent = unsafe { &mut *std::ptr::addr_of_mut!(self.sent) };
 
         let len = buf.len() as u64;
-        dbg!(len);
         let range_start = self.sent;
         let range_end = (range_start + len) - 1;
         let content_range = match size {
@@ -86,7 +88,7 @@ impl<'a> Upload<'a> {
         }
     }
 
-    fn write_to_buf(&mut self, src: &[u8]) -> anyhow::Result<u64> {
+    fn write_to_buf(&mut self, src: &[u8]) -> Result<u64> {
         let filled = self.buf.len();
 
         if filled >= BUF_SIZE {
