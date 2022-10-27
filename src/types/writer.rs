@@ -17,7 +17,7 @@ pub struct Writer<'a> {
 
 impl<'a> Writer<'a> {
     pub async fn new(file: &'a mut File) -> anyhow::Result<Writer<'a>> {
-        let FileId(source, id) = unsafe { &*std::ptr::addr_of!(file.id) };
+        let FileId(source, id) = unsafe { std::mem::transmute::<&FileId, &FileId>(&file.id) };
 
         let inner: BoxedAsyncWrite = match source {
             FileSource::Local => local::write(Path::new(id)).await.map(Box::pin)?,
