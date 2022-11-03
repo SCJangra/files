@@ -57,12 +57,4 @@ impl File {
     pub fn copy_to_dir<'a>(&'a self, dir_id: &'a FileId) -> impl Stream<Item = Result<u64>> + 'a {
         api::copy_to_dir(&self.id, &self.name, dir_id)
     }
-
-    async fn reader(&self) -> Result<Reader> {
-        Reader::new(self).await
-    }
-
-    async fn writer(&mut self) -> Result<Writer> {
-        Writer::new(self).await
-    }
 }

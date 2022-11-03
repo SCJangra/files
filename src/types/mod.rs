@@ -1,9 +1,5 @@
 mod file;
-mod reader;
-mod writer;
 pub use file::File;
-pub use reader::Reader;
-pub use writer::Writer;
 
 use std::pin::Pin;
 
