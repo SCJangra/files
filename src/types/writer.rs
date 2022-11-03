@@ -1,5 +1,4 @@
 use std::{
-    path::Path,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -8,8 +7,6 @@ use tokio::io::AsyncWrite;
 
 use crate::*;
 
-type BoxedAsyncWrite<'a> = Pin<Box<dyn AsyncWrite + Send + 'a>>;
-
 pub struct Writer<'a> {
     file: &'a mut File,
     inner: BoxedAsyncWrite<'a>,
@@ -17,13 +14,9 @@ pub struct Writer<'a> {
 
 impl<'a> Writer<'a> {
     pub async fn new(file: &'a mut File) -> anyhow::Result<Writer<'a>> {
-        let FileId(source, id) = unsafe { std::mem::transmute::<&FileId, &FileId>(&file.id) };
+        let file_id = unsafe { std::mem::transmute::<&FileId, &FileId>(&file.id) };
 
-        let inner: BoxedAsyncWrite = match source {
-            FileSource::Local => local::write(Path::new(id)).await.map(Box::pin)?,
-            #[cfg(feature = "google_drive")]
-            FileSource::GoogleDrive(c) => google_drive::write(c, id).await.map(Box::pin)?,
-        };
+        let inner: BoxedAsyncWrite = api::write(&file_id).await?;
 
         file.size = 0;
         Ok(Self { file, inner })

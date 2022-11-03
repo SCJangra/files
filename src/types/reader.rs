@@ -1,10 +1,8 @@
-use std::{path::Path, pin::Pin};
+use std::pin::Pin;
 
 use tokio::io::AsyncRead;
 
 use crate::*;
-
-type BoxedAsyncRead = Pin<Box<dyn AsyncRead + Send>>;
 
 pub struct Reader<'a> {
     _file: &'a File,
@@ -13,13 +11,7 @@ pub struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     pub async fn new(file: &'a File) -> anyhow::Result<Reader<'a>> {
-        let FileId(source, id) = &file.id;
-
-        let inner: BoxedAsyncRead = match source {
-            FileSource::Local => local::read(Path::new(id)).await.map(Box::pin)?,
-            #[cfg(feature = "google_drive")]
-            FileSource::GoogleDrive(c) => google_drive::read(c, id).await.map(Box::pin)?,
-        };
+        let inner: BoxedAsyncRead = api::read(&file.id).await?;
 
         Ok(Self { _file: file, inner })
     }
